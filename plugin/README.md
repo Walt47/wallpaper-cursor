@@ -44,3 +44,17 @@ Requires the cursor themes in `~/.local/share/icons/` and Mango
 This disables the Stage 1 hook (`cursor-wallpaper.toml` moved aside) so only
 the plugin writes `cursor_theme`. To go back: `./install-plugin.sh
 --uninstall && ./install.sh && noctalia msg config-reload`.
+
+## Tests
+
+Self-contained stub-host suite, no running Noctalia needed (stock `lua` only):
+
+```
+lua plugin/tests/service_test.lua   # from the repo root, expect ALL PASS
+```
+
+Covers all three folder mappings, unmatched/nil paths, steady-state silence,
+missing `cursor_theme=` line, missing Mango config, multi-output
+last-change-wins (changed-wins, tie, no-flap), poll-interval and notification
+toggles. Run it after any `service.luau` change, before the live
+wallpaper-switch test.
