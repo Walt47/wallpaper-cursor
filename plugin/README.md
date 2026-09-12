@@ -54,6 +54,12 @@ the plugin writes `cursor_theme`. To go back: `./install-plugin.sh
   wallpapers, the folder mapping table, and Previous / Next / Settings
   buttons. Previous/Next switch the wallpaper on the focused output (the
   service then follows with the matching cursor).
+- **Pick from disk** (panel section): wallpaper-folder and cursor-theme
+  dropdowns populated from `wallpaper_root` / `icon_root` (folder settings
+  with browse buttons — only real on-disk names, cursor themes detected via
+  their `cursors/` dir). Reference only: copy exact names into Settings →
+  Plugins → Folder map. Folder icons open the corresponding directory
+  (`xdg-open`).
 
 Add the widget through the Noctalia Settings UI (Bar → add widget → pick
 the indicator) — do not hand-edit `~/.local/state/noctalia/settings.toml`,
