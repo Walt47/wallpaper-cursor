@@ -1,0 +1,56 @@
+id           = "walt/wallpaper-cursor"
+name         = "Wallpaper Cursor"
+version      = "0.1.0"
+plugin_api   = 25
+author       = "walt"
+license      = "MIT"
+icon         = "cursor-text"
+description  = "Switch Mango cursor theme per wallpaper folder."
+tags         = ["utility", "wallpaper", "theming"]
+dependencies = ["mmsg"]
+
+# Service reuses the hook's folder->cursor mapping.
+# folder_map defaults mirror hooks/wallpaper-cursor.sh case branches 1:1.
+[[setting]]
+key             = "default_cursor"
+type            = "string"
+label_key       = "settings.default_cursor.label"
+description_key = "settings.default_cursor.description"
+default         = "Adwaita"
+
+[[setting]]
+key             = "folder_map"
+type            = "string_map"
+label_key       = "settings.folder_map.label"
+description_key = "settings.folder_map.description"
+default         = { "Land of the Lustrous" = "Phosphophyllite", "Umineko" = "Beatrice" }
+
+[[setting]]
+key             = "cursor_size"
+type            = "int"
+label_key       = "settings.cursor_size.label"
+description_key = "settings.cursor_size.description"
+default         = 24
+min             = 8
+max             = 96
+
+[[setting]]
+key             = "enable_notifications"
+type            = "bool"
+label_key       = "settings.enable_notifications.label"
+description_key = "settings.enable_notifications.description"
+default         = true
+
+[[setting]]
+key             = "poll_interval_ms"
+type            = "int"
+label_key       = "settings.poll_interval_ms.label"
+description_key = "settings.poll_interval_ms.description"
+default         = 2000
+min             = 500
+max             = 10000
+advanced        = true
+
+[[service]]
+id    = "watcher"
+entry = "service.luau"

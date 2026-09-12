@@ -1,0 +1,12 @@
+{
+  "settings.default_cursor.label": "Default cursor",
+  "settings.default_cursor.description": "Cursor used when no folder mapping matches.",
+  "settings.folder_map.label": "Folder to cursor map",
+  "settings.folder_map.description": "Wallpaper path substring to cursor theme name.",
+  "settings.cursor_size.label": "Cursor size",
+  "settings.cursor_size.description": "Cursor size applied via gsettings for GTK apps.",
+  "settings.enable_notifications.label": "Enable notifications",
+  "settings.enable_notifications.description": "Show a notification when the cursor theme changes.",
+  "settings.poll_interval_ms.label": "Poll interval (ms)",
+  "settings.poll_interval_ms.description": "How often the service checks wallpapers for changes."
+}

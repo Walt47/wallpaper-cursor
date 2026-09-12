@@ -1,0 +1,9 @@
+# Noctalia hook wiring for wallpaper-cursor (Stage 1).
+# Install: symlink or copy this file to ~/.config/noctalia/cursor-wallpaper.toml
+# (install.sh does this). GUI state in ~/.local/state/noctalia/ wins over
+# settings.json, so a dedicated TOML file avoids overwrite fights.
+#
+# Noctalia sets NOCTALIA_WALLPAPER_PATH + NOCTALIA_WALLPAPER_CONNECTOR
+# and runs this once per changed output.
+[hooks]
+wallpaper_changed = "/home/walt/Coding-Projects/Personal-Projects/wallpaper-cursor/hooks/wallpaper-cursor.sh"

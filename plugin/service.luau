@@ -1,0 +1,191 @@
+-- watcher service: poll wallpaper per output, apply mapped cursor.
+-- Parity with hooks/wallpaper-cursor.sh. Settings:
+--   default_cursor (string), folder_map (string_map: folder substring -> cursor),
+--   cursor_size (int), enable_notifications (bool), poll_interval_ms (int).
+-- Multi-output policy: last-change-wins, single write per poll. Outputs are
+-- sorted by connector name for determinism; the most recently changed output
+-- wins, falling back to the last sorted output when nothing changed (steady
+-- state) or to the remembered winner across polls.
+local MANGO_CONF = (noctalia.getenv("HOME") or os.getenv("HOME") or "") .. "/.config/mango/config.conf"
+
+local DEFAULT_POLL_MS = 2000
+local DEFAULT_SIZE = 24
+
+local prev_paths = {}
+local last_winner_name = nil
+local applied_interval = nil
+
+noctalia.setUpdateInterval(DEFAULT_POLL_MS)
+applied_interval = DEFAULT_POLL_MS
+
+local function resolve_cursor(path, folder_map, default_cursor)
+  if path == nil then return default_cursor end
+  for folder, cursor in pairs(folder_map) do
+    if string.find(path, folder, 1, true) then
+      return cursor
+    end
+  end
+  return default_cursor
+end
+
+local function current_cursor()
+  local f = noctalia.readFile(MANGO_CONF)
+  if not f then return nil end
+  local theme = string.match(f, "cursor_theme=([^\n]+)")
+  return theme
+end
+
+local function write_cursor(cursor)
+  local f = noctalia.readFile(MANGO_CONF)
+  if f == nil then
+    return false, "mango conf missing: " .. MANGO_CONF
+  end
+  local lines = {}
+  local found = false
+  for raw in (f .. "\n"):gmatch("([^\n]*)\n") do
+    local line = raw
+    if string.match(line, "^cursor_theme=") then
+      line = "cursor_theme=" .. cursor
+      found = true
+    end
+    table.insert(lines, line)
+  end
+  if not found then
+    table.insert(lines, "cursor_theme=" .. cursor)
+  end
+  local ok, err = noctalia.writeFile(MANGO_CONF, table.concat(lines, "\n"))
+  if not ok then
+    return false, err or "write failed"
+  end
+  return true
+end
+
+local function live_apply(cursor, size)
+  -- Primary: setoption changes appearance without reload (no flicker).
+  -- Fallback: script-triggered hot-reload (still no keypress).
+  if noctalia.commandExists("mmsg") then
+    noctalia.runAsync({ "mmsg", "-s", "-d", "setoption,cursor_theme," .. cursor }, function(res)
+      if res == nil or res.exitCode ~= 0 then
+        noctalia.runAsync({ "mmsg", "-s", "-d", "reload_config" })
+      end
+    end)
+  end
+  -- GTK apps follow live (Noctalia's gtk template only syncs gtk-theme,
+  -- not cursor). Best-effort: silent when gsettings is unavailable.
+  if noctalia.commandExists("gsettings") then
+    noctalia.runAsync({ "gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", cursor })
+    noctalia.runAsync({ "gsettings", "set", "org.gnome.desktop.interface", "cursor-size", tostring(size) })
+  end
+end
+
+local function apply_cursor(cursor, wallpaper_path, output_name, size, notify_enabled)
+  if cursor == nil then return end
+  local previous = current_cursor()
+  if previous == cursor then return end
+  local ok, err = write_cursor(cursor)
+  if not ok then
+    noctalia.log("wallpaper-cursor: cannot write " .. MANGO_CONF .. ": " .. tostring(err))
+    noctalia.notifyError("wallpaper-cursor: cannot write Mango config", tostring(err))
+    return
+  end
+  live_apply(cursor, size)
+  noctalia.log(
+    "wallpaper-cursor: ["
+      .. tostring(output_name or "")
+      .. "] "
+      .. tostring(wallpaper_path)
+      .. " -> "
+      .. tostring(cursor)
+      .. " (was: "
+      .. tostring(previous or "unset")
+      .. ", applied live)."
+  )
+  if notify_enabled then
+    noctalia.notify("Cursor: " .. tostring(cursor), tostring(wallpaper_path or ""))
+  end
+end
+
+local function config_number(key, fallback, min_v, max_v)
+  local v = noctalia.getConfig(key)
+  if type(v) ~= "number" then return fallback end
+  if v < min_v or v > max_v then return fallback end
+  return math.floor(v)
+end
+
+function update()
+  local folder_map = noctalia.getConfig("folder_map") or {}
+  local default_cursor = noctalia.getConfig("default_cursor") or "Adwaita"
+  local size = config_number("cursor_size", DEFAULT_SIZE, 8, 96)
+  local notify_enabled = noctalia.getConfig("enable_notifications")
+  if notify_enabled == nil then notify_enabled = true end
+  local poll_ms = config_number("poll_interval_ms", DEFAULT_POLL_MS, 500, 10000)
+  if poll_ms ~= applied_interval then
+    noctalia.setUpdateInterval(poll_ms)
+    applied_interval = poll_ms
+  end
+
+  local outs = noctalia.outputs() or {}
+  if #outs == 0 then return end
+  table.sort(outs, function(a, b)
+    return tostring(a.name or "") < tostring(b.name or "")
+  end)
+
+  -- Snapshot current wallpapers in sorted order.
+  local current_paths = {}
+  for _, out in ipairs(outs) do
+    local name = out.name
+    if name ~= nil then
+      local ok, path = pcall(noctalia.wallpaperPath, name)
+      if ok then
+        current_paths[name] = path
+      else
+        current_paths[name] = nil
+      end
+    end
+  end
+
+  -- Find outputs whose wallpaper changed since the last poll.
+  local changed = {}
+  for _, out in ipairs(outs) do
+    local name = out.name
+    if name ~= nil and current_paths[name] ~= prev_paths[name] then
+      table.insert(changed, out)
+    end
+  end
+
+  local winner = nil
+  if #changed > 0 then
+    winner = changed[#changed] -- last changed in sorted order
+    last_winner_name = winner.name
+  elseif last_winner_name ~= nil and current_paths[last_winner_name] ~= nil then
+    for _, out in ipairs(outs) do
+      if out.name == last_winner_name then
+        winner = out
+        break
+      end
+    end
+  end
+  if winner == nil then
+    winner = outs[#outs] -- deterministic fallback: last sorted output
+    last_winner_name = winner.name
+  end
+
+  local path = current_paths[winner.name]
+  local cursor = resolve_cursor(path, folder_map, default_cursor)
+  apply_cursor(cursor, path, winner.name, size, notify_enabled)
+  noctalia.state.set("wallpaper-cursor.cursor", cursor)
+
+  prev_paths = current_paths
+end
+
+function onConfigChanged()
+  update()
+end
+
+function onOutputsChanged()
+  update()
+end
+
+function onEnable()
+  update()
+end
