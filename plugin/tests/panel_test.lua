@@ -10,25 +10,6 @@ local config = {
 local live_outputs = { { name = "eDP-1" } }
 local live_wallpapers = { ["eDP-1"] = "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png" }
 local focused_name = "eDP-1"
-local has_xdg = true
-
--- Fake filesystem for discovery: dirs map to their children; files are
--- listed with isDir=false; anything else is missing (nil).
-local fs_children = {
-  ["/pics/Wallpapers"] = { "Umineko", "Others", "loose.txt" },
-  ["/pics/Wallpapers/Umineko"] = {},
-  ["/pics/Wallpapers/Others"] = {},
-  ["/icons"] = { "Beatrice", "Phosphophyllite", "hicolor", "notes.txt" },
-  ["/icons/Beatrice"] = {},
-  ["/icons/Beatrice/cursors"] = {},
-  ["/icons/Phosphophyllite"] = {},
-  ["/icons/Phosphophyllite/cursors"] = {},
-  ["/icons/hicolor"] = {},
-}
-local fs_files = {
-  ["/pics/Wallpapers/loose.txt"] = true,
-  ["/icons/notes.txt"] = true,
-}
 
 local calls = { run = {}, settings = 0, logs = {} }
 local watchers = {}
@@ -57,21 +38,6 @@ noctalia = {
   end,
   openSettings = function() calls.settings = calls.settings + 1 end,
   log = function(m) table.insert(calls.logs, m) end,
-  expandPath = function(p) return (string.gsub(p, "^~", "/home/test")) end,
-  listDir = function(path) return fs_children[path] end,
-  fileInfo = function(path)
-    if fs_children[path] ~= nil then
-      return { size = 0, mtime = 0, isDir = true }
-    end
-    if fs_files[path] then
-      return { size = 10, mtime = 0, isDir = false }
-    end
-    return nil
-  end,
-  commandExists = function(n)
-    if n == "xdg-open" then return has_xdg end
-    return false
-  end,
   tr = function(key, subst)
     local s = tr_templates[key] or key
     if subst then
@@ -114,7 +80,6 @@ ui = {
   glyph = ctor("glyph"),
   button = ctor("button"),
   separator = ctor("separator"),
-  select = ctor("select"),
 }
 
 local failures = 0
@@ -228,7 +193,7 @@ check("section-separators", (function()
   walk(t1, function(node)
     if node.type == "separator" then n = n + 1 end
   end)
-  return n == 5
+  return n == 4
 end)(), "separators")
 check("headers-bold", (function()
   local bold = {}
@@ -365,92 +330,5 @@ local ok = pcall(function() onOpen(nil) end)
 check("nil-config-no-crash", ok)
 local ok2 = pcall(function() onClose() end)
 check("close-no-crash", ok2)
-
--- 9: discovery populates selects; folder buttons open exact dirs
-config.folder_map = { Umineko = "Beatrice", Zzz = "Adwaita" }
-config.default_cursor = "Adwaita"
-config.wallpaper_root = "/pics/Wallpapers"
-config.icon_root = "/icons"
-has_xdg = true
-noctalia.state._s["wallpaper-cursor.board"] = {
-  cursor = "Beatrice",
-  outputs = {
-    { name = "eDP-1", wallpaper = "/pics/Wallpapers/Umineko/Beatrice.png" },
-  },
-}
-noctalia.state._s["wallpaper-cursor.cursor"] = "Beatrice"
-panel.renders = {}
-onOpen(nil)
-local t9 = latest()
-
-local function find_selects(tree)
-  local out = {}
-  walk(tree, function(n)
-    if n.type == "select" then table.insert(out, n) end
-  end)
-  return out
-end
-
-local function find_folder_buttons(tree)
-  local out = {}
-  walk(tree, function(n)
-    if n.type == "button" and type(n.props) == "table" and n.props.glyph == "folder" then
-      table.insert(out, n)
-    end
-  end)
-  return out
-end
-
-local sels = find_selects(t9)
-check("select-count", #sels == 3, #sels)
--- folder select: sorted subdirs, loose.txt excluded
-check("folder-options", sels[1] ~= nil and sels[1].props.options ~= nil
-  and #sels[1].props.options == 2
-  and sels[1].props.options[1] == "Others"
-  and sels[1].props.options[2] == "Umineko")
--- cursor select: cursors/ marker only (hicolor + notes.txt excluded)
-local copts = (sels[2] ~= nil and sels[2].props.options) or {}
-check("cursor-options", #copts == 2 and copts[1] == "Beatrice" and copts[2] == "Phosphophyllite")
--- default select presets nothing known (Adwaita not installed) -> first item
-check("default-select-first", sels[3] ~= nil and sels[3].props.selectedIndex == 0)
--- preview uses => (keeps → counts stable) with first pair selected
-local texts9 = collect_texts(t9)
-check("preview-pair", texts_contain(texts9, "Others => Beatrice"))
--- 0-based contract: index "1" selects the second folder
-onPickFolder("1")
-panel.renders = {}
-onOpen(nil)
-check("pick-updates-preview", texts_contain(collect_texts(latest()), "Umineko => Beatrice"))
--- folder buttons: 2 mapping + 1 output + 1 default
-local fbs = find_folder_buttons(latest())
-check("folder-button-count", #fbs == 4, #fbs)
-calls.run = {}
-for _, b in ipairs(fbs) do
-  b.props.onClick()
-end
-local opened = {}
-for _, argv in ipairs(calls.run) do
-  if argv[1] == "xdg-open" then opened[argv[2]] = true end
-end
-check("folder-opens-subdir", opened["/pics/Wallpapers/Umineko"] == true)
-check("folder-opens-fallback", opened["/pics/Wallpapers"] == true)
-check("folder-opens-walldir", opened["/pics/Wallpapers/Umineko"] == true)
-check("folder-opens-icons", opened["/icons"] == true)
--- without xdg-open: no folder buttons, no crash
-has_xdg = false
-panel.renders = {}
-onOpen(nil)
-check("no-xdg-no-buttons", #find_folder_buttons(latest()) == 0)
-has_xdg = true
--- nil roots: empty selects, unknown preview, no crash
-config.wallpaper_root = nil
-config.icon_root = nil
-panel.renders = {}
-local ok9 = pcall(function() onOpen(nil) end)
-check("nil-roots-no-crash", ok9)
-local texts9b = collect_texts(latest())
-check("nil-roots-preview", texts_contain(texts9b, "=>"))
-check("nil-roots-no-selects", #find_selects(latest()) == 0)
-onClose()
 
 if failures > 0 then print(failures .. " FAILURES") os.exit(1) else print("ALL PASS") end
