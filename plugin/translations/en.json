@@ -8,5 +8,17 @@
   "settings.enable_notifications.label": "Enable notifications",
   "settings.enable_notifications.description": "Show a notification when the cursor theme changes.",
   "settings.poll_interval_ms.label": "Poll interval (ms)",
-  "settings.poll_interval_ms.description": "How often the service checks wallpapers for changes."
+  "settings.poll_interval_ms.description": "How often the service checks wallpapers for changes.",
+  "settings.show_label.label": "Show cursor name",
+  "settings.show_label.description": "Show the active cursor theme name next to the bar icon.",
+  "widget.tooltip": "{cursor} — {wallpaper}",
+  "panel.title": "Wallpaper Cursor",
+  "panel.active_cursor": "Active cursor",
+  "panel.outputs": "Wallpapers",
+  "panel.mapping": "Folder mapping",
+  "panel.previous": "Previous wallpaper",
+  "panel.next": "Next wallpaper",
+  "panel.settings": "Plugin settings",
+  "panel.unknown": "unknown",
+  "panel.default_row": "everything else → {cursor}"
 }

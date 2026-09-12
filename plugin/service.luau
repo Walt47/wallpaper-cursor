@@ -13,6 +13,7 @@ local DEFAULT_SIZE = 24
 
 local prev_paths = {}
 local last_winner_name = nil
+local last_board_sig = nil
 local applied_interval = nil
 
 noctalia.setUpdateInterval(DEFAULT_POLL_MS)
@@ -174,6 +175,25 @@ function update()
   local cursor = resolve_cursor(path, folder_map, default_cursor)
   apply_cursor(cursor, path, winner.name, size, notify_enabled)
   noctalia.state.set("wallpaper-cursor.cursor", cursor)
+
+  -- Board snapshot for future UI entries (widget/panel). Outputs reuse the
+  -- already-sorted outs order. Publish only on change (cursor or any
+  -- wallpaper path) so watchers are not spammed every poll.
+  local board_rows = {}
+  local sig_parts = {}
+  for _, out in ipairs(outs) do
+    local bname = out.name
+    if bname ~= nil then
+      local wpath = current_paths[bname] or ""
+      table.insert(board_rows, { name = bname, wallpaper = wpath })
+      table.insert(sig_parts, bname .. "=" .. wpath .. ";")
+    end
+  end
+  local board_sig = tostring(cursor or "") .. "|" .. table.concat(sig_parts, "")
+  if board_sig ~= last_board_sig then
+    last_board_sig = board_sig
+    noctalia.state.set("wallpaper-cursor.board", { cursor = cursor, outputs = board_rows })
+  end
 
   prev_paths = current_paths
 end

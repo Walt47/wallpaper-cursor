@@ -45,6 +45,20 @@ This disables the Stage 1 hook (`cursor-wallpaper.toml` moved aside) so only
 the plugin writes `cursor_theme`. To go back: `./install-plugin.sh
 --uninstall && ./install.sh && noctalia msg config-reload`.
 
+## Bar widget + panel
+
+- **Widget** (`walt/wallpaper-cursor:indicator`): bar capsule showing the
+  active cursor theme (glyph + name, name toggleable via `show_label`).
+  Click opens the panel, right-click opens the plugin settings.
+- **Panel** (`walt/wallpaper-cursor:board`): active cursor, per-output
+  wallpapers, the folder mapping table, and Previous / Next / Settings
+  buttons. Previous/Next switch the wallpaper on the focused output (the
+  service then follows with the matching cursor).
+
+Add the widget through the Noctalia Settings UI (Bar → add widget → pick
+the indicator) — do not hand-edit `~/.local/state/noctalia/settings.toml`,
+it is GUI-owned and manual edits get overwritten.
+
 ## Tests
 
 Self-contained stub-host suite, no running Noctalia needed (stock `lua` only):

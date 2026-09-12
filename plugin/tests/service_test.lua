@@ -131,4 +131,61 @@ wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Land of the Lustrous/Phos.
 update()
 check("notify-toggle", #calls.notifies == n0, #calls.notifies)
 
+-- 11: board snapshot single-output content
+config.poll_interval_ms = 2000
+config.cursor_size = 24
+config.enable_notifications = true
+outputs = { { name = "eDP-1" } }
+wallpapers = { ["eDP-1"] = "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png" }
+files[MANGO] = "cursor_theme=Adwaita\n"
+update()
+local board = noctalia.state._s["wallpaper-cursor.board"]
+check("board-single-cursor", board ~= nil and board.cursor == "Beatrice", board and board.cursor)
+check("board-single-count", board ~= nil and board.outputs ~= nil and #board.outputs == 1, board and board.outputs and #board.outputs)
+check("board-single-row", board ~= nil and board.outputs[1].name == "eDP-1" and board.outputs[1].wallpaper == "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png", board and board.outputs and board.outputs[1] and (board.outputs[1].name .. "=" .. tostring(board.outputs[1].wallpaper)))
+check("cursor-key-compat", noctalia.state._s["wallpaper-cursor.cursor"] == "Beatrice", noctalia.state._s["wallpaper-cursor.cursor"])
+
+-- 12: board multi-output rows sorted by name (input intentionally unsorted)
+outputs = { { name = "eDP-1" }, { name = "DP-1" } }
+wallpapers = {
+  ["DP-1"] = "/home/walt/Pictures/Wallpapers/Land of the Lustrous/Bort.png",
+  ["eDP-1"] = "/home/walt/Pictures/Wallpapers/Others/Reverend.png",
+}
+update()
+board = noctalia.state._s["wallpaper-cursor.board"]
+check("board-multi-cursor", board ~= nil and board.cursor == "Adwaita", board and board.cursor)
+check("board-multi-count", board ~= nil and board.outputs ~= nil and #board.outputs == 2, board and board.outputs and #board.outputs)
+check("board-multi-sorted", board ~= nil and board.outputs[1].name == "DP-1" and board.outputs[2].name == "eDP-1", board and (board.outputs[1].name .. "," .. board.outputs[2].name))
+check("board-multi-wallpapers", board ~= nil and board.outputs[1].wallpaper == "/home/walt/Pictures/Wallpapers/Land of the Lustrous/Bort.png" and board.outputs[2].wallpaper == "/home/walt/Pictures/Wallpapers/Others/Reverend.png", board and (tostring(board.outputs[1].wallpaper) .. "|" .. tostring(board.outputs[2].wallpaper)))
+
+-- 13: steady-state poll does NOT re-publish board, but cursor key still does
+local board_publishes = 0
+local cursor_publishes = 0
+local orig_state_set = noctalia.state.set
+noctalia.state.set = function(k, v)
+  if k == "wallpaper-cursor.board" then board_publishes = board_publishes + 1 end
+  if k == "wallpaper-cursor.cursor" then cursor_publishes = cursor_publishes + 1 end
+  return orig_state_set(k, v)
+end
+local steady_board = noctalia.state._s["wallpaper-cursor.board"]
+update()
+check("board-steady-no-republish", board_publishes == 0, board_publishes)
+check("board-steady-object-stable", noctalia.state._s["wallpaper-cursor.board"] == steady_board, "replaced")
+check("cursor-key-steady-publishes", cursor_publishes == 1, cursor_publishes)
+
+-- 14: wallpaper change DOES re-publish board with fresh content
+wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png"
+update()
+check("board-change-republishes", board_publishes == 1, board_publishes)
+board = noctalia.state._s["wallpaper-cursor.board"]
+check("board-change-content", board ~= nil and board.cursor == "Beatrice" and board.outputs[2].name == "eDP-1" and board.outputs[2].wallpaper == "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png", board and (tostring(board.cursor) .. "|" .. tostring(board.outputs[2].wallpaper)))
+
+-- 15: nil wallpaper maps to empty string row
+wallpapers["DP-1"] = nil
+update()
+board = noctalia.state._s["wallpaper-cursor.board"]
+check("board-nil-empty", board ~= nil and board.outputs[1].name == "DP-1" and board.outputs[1].wallpaper == "", board and (board.outputs[1].name .. "=" .. tostring(board.outputs[1].wallpaper)))
+check("board-nil-republishes", board_publishes == 2, board_publishes)
+noctalia.state.set = orig_state_set
+
 if failures > 0 then print(failures .. " FAILURES") os.exit(1) else print("ALL PASS") end
