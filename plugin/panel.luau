@@ -119,7 +119,7 @@ local function render()
   table.sort(keys)
 
   local output_rows = {}
-  table.insert(output_rows, ui.label({ text = noctalia.tr("panel.outputs") }))
+  table.insert(output_rows, ui.label({ text = noctalia.tr("panel.outputs"), fontWeight = "bold" }))
   for _, o in ipairs(outputs) do
     local name = nil
     local wall = nil
@@ -143,7 +143,7 @@ local function render()
   end
 
   local mapping_children = {}
-  table.insert(mapping_children, ui.label({ text = noctalia.tr("panel.mapping") }))
+  table.insert(mapping_children, ui.label({ text = noctalia.tr("panel.mapping"), fontWeight = "bold" }))
   for _, folder in ipairs(keys) do
     local c = folder_map[folder]
     if type(c) ~= "string" then
@@ -158,17 +158,21 @@ local function render()
   }))
 
   panel.render(ui.column({ gap = 12 }, {
-    ui.row({ gap = 8 }, {
-      ui.glyph({ name = "cursor-text" }),
-      ui.label({ text = noctalia.tr("panel.title") }),
+    ui.row({ gap = 8, align = "center" }, {
+      ui.glyph({ name = "photo", size = 18 }),
+      ui.label({ text = noctalia.tr("panel.title"), fontSize = 16, fontWeight = "bold" }),
     }),
+    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
     ui.row({ gap = 8 }, {
       ui.label({ text = noctalia.tr("panel.active_cursor") }),
-      ui.label({ text = cursor_text }),
+      ui.label({ text = cursor_text, fontWeight = "bold" }),
     }),
+    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
     ui.column({ gap = 8 }, output_rows),
+    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
     ui.column({ gap = 8 }, mapping_children),
-    ui.row({ gap = 8 }, {
+    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
+    ui.column({ gap = 8 }, {
       ui.button({ text = noctalia.tr("panel.previous"), onClick = "onPrev" }),
       ui.button({ text = noctalia.tr("panel.next"), onClick = "onNext" }),
       ui.button({ text = noctalia.tr("panel.settings"), onClick = "onSettings" }),

@@ -167,7 +167,57 @@ check("open-renders", #panel.renders >= 1, #panel.renders)
 local t1 = latest()
 local texts1 = collect_texts(t1)
 check("title-present", texts_contain(texts1, "Wallpaper Cursor"))
-check("title-glyph", texts_contain(texts1, "cursor-text"))
+check("title-glyph", texts_contain(texts1, "photo"))
+check("title-glyph-exact", (function()
+  local found = false
+  walk(t1, function(n)
+    if n.type == "glyph" and type(n.props) == "table" and n.props.name == "photo" then
+      found = true
+    end
+  end)
+  return found
+end)())
+check("title-styled", (function()
+  local ok = false
+  walk(t1, function(n)
+    if n.type == "label" and type(n.props) == "table"
+      and n.props.text == "Wallpaper Cursor"
+      and n.props.fontWeight == "bold" and n.props.fontSize == 16 then
+      ok = true
+    end
+  end)
+  return ok
+end)())
+check("section-separators", (function()
+  local n = 0
+  walk(t1, function(node)
+    if node.type == "separator" then n = n + 1 end
+  end)
+  return n == 4
+end)(), "separators")
+check("headers-bold", (function()
+  local bold = {}
+  walk(t1, function(n)
+    if n.type == "label" and type(n.props) == "table" and n.props.fontWeight == "bold"
+      and type(n.props.text) == "string" then
+      bold[n.props.text] = true
+    end
+  end)
+  return bold["Outputs"] and bold["Mapping"]
+end)())
+check("buttons-stacked", (function()
+  local ok = true
+  walk(t1, function(n)
+    if n.type == "row" and type(n.children) == "table" then
+      local nb = 0
+      for _, c in ipairs(n.children) do
+        if type(c) == "table" and c.type == "button" then nb = nb + 1 end
+      end
+      if nb > 1 then ok = false end
+    end
+  end)
+  return ok
+end)())
 check("active-label", texts_contain(texts1, "Active cursor"))
 check("active-cursor", texts_contain(texts1, "Beatrice"))
 -- sorted mapping rows: collect labels containing the arrow in DFS order
