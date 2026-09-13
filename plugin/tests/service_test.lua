@@ -11,9 +11,13 @@ local config = {
   cursor_size = 24,
   enable_notifications = true,
   poll_interval_ms = 2000,
+  enforce_dark_mode = true,
 }
 local outputs = { { name = "eDP-1" } }
 local wallpapers = { ["eDP-1"] = "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png" }
+local theme_mode = "dark"
+local theme_get_fail = false
+local commands = { mmsg = true, gsettings = true }
 
 local calls = { run = {}, logs = {}, notifies = {}, errors = {}, intervals = {}, writes = 0 }
 
@@ -21,10 +25,20 @@ noctalia = {
   getenv = function(n) if n == "HOME" then return "/home/test" end return nil end,
   readFile = function(p) return files[p] end,
   writeFile = function(p, c) files[p] = c calls.writes = calls.writes + 1 return true end,
-  commandExists = function(n) return n == "mmsg" or n == "gsettings" end,
+  commandExists = function(n) return commands[n] == true end,
   runAsync = function(argv, cb)
     table.insert(calls.run, argv)
-    if cb then cb({ exitCode = 0, stdout = "", stderr = "" }) end
+    if cb then
+      if argv[3] == "theme-mode-get" then
+        if theme_get_fail then
+          cb({ exitCode = 1, stdout = "", stderr = "boom" })
+        else
+          cb({ exitCode = 0, stdout = (theme_mode or "dark") .. "\n", stderr = "" })
+        end
+      else
+        cb({ exitCode = 0, stdout = "", stderr = "" })
+      end
+    end
     return true
   end,
   getConfig = function(k) return config[k] end,
@@ -187,5 +201,53 @@ board = noctalia.state._s["wallpaper-cursor.board"]
 check("board-nil-empty", board ~= nil and board.outputs[1].name == "DP-1" and board.outputs[1].wallpaper == "", board and (board.outputs[1].name .. "=" .. tostring(board.outputs[1].wallpaper)))
 check("board-nil-republishes", board_publishes == 2, board_publishes)
 noctalia.state.set = orig_state_set
+
+-- 16: dark-mode enforcement runs on switches only
+commands["noctalia"] = true
+local function count_theme(op)
+  local n = 0
+  for _, argv in ipairs(calls.run) do
+    if argv[3] == op then n = n + 1 end
+  end
+  return n
+end
+local function last_theme_set()
+  for i = #calls.run, 1, -1 do
+    if calls.run[i][3] == "theme-mode-set" then return calls.run[i] end
+  end
+  return nil
+end
+-- already dark + switch -> get consulted, no set (apply still ran)
+theme_mode = "dark"
+wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Land of the Lustrous/Bort.png"
+local gets0, sets0 = count_theme("theme-mode-get"), count_theme("theme-mode-set")
+update()
+check("dark-no-set", cursor() == "Phosphophyllite" and count_theme("theme-mode-set") == sets0, cursor())
+check("dark-get-consulted", count_theme("theme-mode-get") == gets0 + 1, count_theme("theme-mode-get") - gets0)
+-- light + switch -> exactly one set back to dark with exact argv
+theme_mode = "light"
+wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png"
+update()
+local set_argv = last_theme_set()
+check("light-sets-dark", cursor() == "Beatrice" and count_theme("theme-mode-set") == sets0 + 1, cursor())
+check("light-set-argv", set_argv ~= nil and #set_argv == 4 and set_argv[1] == "noctalia" and set_argv[2] == "msg" and set_argv[3] == "theme-mode-set" and set_argv[4] == "dark")
+-- disabled + light + switch -> no set at all
+config.enforce_dark_mode = false
+theme_mode = "light"
+wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Others/Reverend.png"
+local sets1 = count_theme("theme-mode-set")
+update()
+check("disabled-no-set", cursor() == "Adwaita" and count_theme("theme-mode-set") == sets1, cursor())
+config.enforce_dark_mode = true
+-- get failure + switch -> no crash, no set
+theme_get_fail = true
+wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Land of the Lustrous/Bort.png"
+local ok16 = pcall(function() update() end)
+check("getfail-no-crash", ok16 and cursor() == "Phosphophyllite" and count_theme("theme-mode-set") == sets1, cursor())
+theme_get_fail = false
+-- steady poll (no switch) -> theme IPC untouched
+local gets2, sets2 = count_theme("theme-mode-get"), count_theme("theme-mode-set")
+update()
+check("steady-no-theme-ipc", count_theme("theme-mode-get") == gets2 and count_theme("theme-mode-set") == sets2)
 
 if failures > 0 then print(failures .. " FAILURES") os.exit(1) else print("ALL PASS") end

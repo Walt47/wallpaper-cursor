@@ -42,6 +42,13 @@ description_key = "settings.enable_notifications.description"
 default         = true
 
 [[setting]]
+key             = "enforce_dark_mode"
+type            = "bool"
+label_key       = "settings.enforce_dark_mode.label"
+description_key = "settings.enforce_dark_mode.description"
+default         = true
+
+[[setting]]
 key             = "poll_interval_ms"
 type            = "int"
 label_key       = "settings.poll_interval_ms.label"

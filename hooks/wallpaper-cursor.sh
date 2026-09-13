@@ -8,6 +8,9 @@
 #   */Umineko/*              -> Beatrice
 #   * (everything else)      -> Adwaita (default)
 #
+# Also enforces dark app theme on every switch (best-effort, skipped when
+# already dark). Stage 2 plugin mirrors this via enforce_dark_mode.
+#
 # This is Stage 1 (hook). Stage 2 plugin reuses the same mapping
 # via folder_map defaults 1:1. See ../plugin/plugin.toml.
 set -euo pipefail
@@ -64,6 +67,17 @@ fi
 if command -v gsettings >/dev/null 2>&1; then
   gsettings set org.gnome.desktop.interface cursor-theme "$CURSOR" 2>/dev/null || true
   gsettings set org.gnome.desktop.interface cursor-size 24 2>/dev/null || true
+fi
+
+# 4. Keep app theme dark across wallpaper switches.
+# Best-effort: silent when already dark or when noctalia IPC is unavailable,
+# and never fails the cursor switch above.
+if command -v noctalia >/dev/null 2>&1; then
+  MODE="$(noctalia msg theme-mode-get 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+  if [[ -n "$MODE" && "$MODE" != "dark" ]]; then
+    noctalia msg theme-mode-set dark 2>/dev/null || true
+    logger -t noctalia-hooks "wallpaper-cursor: theme mode was '$MODE', set back to dark."
+  fi
 fi
 
 logger -t noctalia-hooks "wallpaper-cursor: [$CONNECTOR] $WALLPAPER_PATH -> $CURSOR (was: ${CURRENT:-unset}, applied live)."

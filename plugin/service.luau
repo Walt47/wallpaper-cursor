@@ -1,7 +1,8 @@
 -- watcher service: poll wallpaper per output, apply mapped cursor.
 -- Parity with hooks/wallpaper-cursor.sh. Settings:
 --   default_cursor (string), folder_map (string_map: folder substring -> cursor),
---   cursor_size (int), enable_notifications (bool), poll_interval_ms (int).
+--   cursor_size (int), enable_notifications (bool), poll_interval_ms (int),
+--   enforce_dark_mode (bool).
 -- Multi-output policy: last-change-wins, single write per poll. Outputs are
 -- sorted by connector name for determinism; the most recently changed output
 -- wins, falling back to the last sorted output when nothing changed (steady
@@ -79,7 +80,28 @@ local function live_apply(cursor, size)
   end
 end
 
-local function apply_cursor(cursor, wallpaper_path, output_name, size, notify_enabled)
+-- Keep the app theme on dark across wallpaper switches (best-effort, silent
+-- when already dark or when the noctalia CLI is unavailable).
+local function enforce_dark(enabled)
+  if not enabled then
+    return
+  end
+  if not noctalia.commandExists("noctalia") then
+    return
+  end
+  noctalia.runAsync({ "noctalia", "msg", "theme-mode-get" }, function(res)
+    local mode = nil
+    if res ~= nil and type(res.stdout) == "string" then
+      mode = string.match(res.stdout, "^%s*(%S+)")
+    end
+    if mode ~= nil and mode ~= "dark" then
+      noctalia.runAsync({ "noctalia", "msg", "theme-mode-set", "dark" })
+      noctalia.log("wallpaper-cursor: theme mode was '" .. mode .. "', set back to dark.")
+    end
+  end)
+end
+
+local function apply_cursor(cursor, wallpaper_path, output_name, size, notify_enabled, dark_enabled)
   if cursor == nil then return end
   local previous = current_cursor()
   if previous == cursor then return end
@@ -90,6 +112,7 @@ local function apply_cursor(cursor, wallpaper_path, output_name, size, notify_en
     return
   end
   live_apply(cursor, size)
+  enforce_dark(dark_enabled)
   noctalia.log(
     "wallpaper-cursor: ["
       .. tostring(output_name or "")
@@ -119,6 +142,8 @@ function update()
   local size = config_number("cursor_size", DEFAULT_SIZE, 8, 96)
   local notify_enabled = noctalia.getConfig("enable_notifications")
   if notify_enabled == nil then notify_enabled = true end
+  local dark_enabled = noctalia.getConfig("enforce_dark_mode")
+  if dark_enabled == nil then dark_enabled = true end
   local poll_ms = config_number("poll_interval_ms", DEFAULT_POLL_MS, 500, 10000)
   if poll_ms ~= applied_interval then
     noctalia.setUpdateInterval(poll_ms)
@@ -173,7 +198,7 @@ function update()
 
   local path = current_paths[winner.name]
   local cursor = resolve_cursor(path, folder_map, default_cursor)
-  apply_cursor(cursor, path, winner.name, size, notify_enabled)
+  apply_cursor(cursor, path, winner.name, size, notify_enabled, dark_enabled)
   noctalia.state.set("wallpaper-cursor.cursor", cursor)
 
   -- Board snapshot for future UI entries (widget/panel). Outputs reuse the
