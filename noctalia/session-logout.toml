@@ -1,0 +1,7 @@
+# Noctalia hook wiring for session logout (fixes dead Mango logout in 5.0.1).
+# Install: symlink this file to ~/.config/noctalia/session-logout.toml
+# (dedicated file so GUI state in ~/.local/state/noctalia/ never fights it).
+# Fires immediately before the session panel runs its logout sequence, for
+# both the logout button and its number key.
+[hooks]
+logging_out = "/home/walt/Coding-Projects/Personal-Projects/wallpaper-cursor/hooks/session-logout.sh"
