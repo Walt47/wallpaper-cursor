@@ -58,6 +58,20 @@ min             = 500
 max             = 10000
 advanced        = true
 
+[[setting]]
+key             = "wallpaper_root"
+type            = "folder"
+label_key       = "settings.wallpaper_root.label"
+description_key = "settings.wallpaper_root.description"
+default         = "~/Pictures/Wallpapers"
+
+[[setting]]
+key             = "icon_root"
+type            = "folder"
+label_key       = "settings.icon_root.label"
+description_key = "settings.icon_root.description"
+default         = "~/.local/share/icons"
+
 [[service]]
 id    = "watcher"
 entry = "service.luau"

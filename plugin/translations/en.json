@@ -11,6 +11,10 @@
   "settings.enforce_dark_mode.description": "Set the theme back to dark on every wallpaper switch.",
   "settings.poll_interval_ms.label": "Poll interval (ms)",
   "settings.poll_interval_ms.description": "How often the service checks wallpapers for changes.",
+  "settings.wallpaper_root.label": "Wallpaper root",
+  "settings.wallpaper_root.description": "Folder whose subfolders are offered in the panel picker.",
+  "settings.icon_root.label": "Cursor theme root",
+  "settings.icon_root.description": "Folder whose cursor themes are offered in the panel picker.",
   "settings.show_label.label": "Show cursor name",
   "settings.show_label.description": "Show the active cursor theme name next to the bar icon.",
   "widget.tooltip": "{cursor} — {wallpaper}",
@@ -22,5 +26,11 @@
   "panel.next": "Next wallpaper",
   "panel.settings": "Plugin settings",
   "panel.unknown": "unknown",
-  "panel.default_row": "everything else → {cursor}"
+  "panel.default_row": "everything else → {cursor}",
+  "panel.pick_title": "Pick from disk",
+  "panel.pick_folder": "Wallpaper folder",
+  "panel.pick_cursor": "Cursor theme",
+  "panel.pick_hint": "Copy exact names into Settings → Plugins → Folder map",
+  "panel.default_select": "Default cursor (reference)",
+  "panel.open_folder": "Open folder"
 }
