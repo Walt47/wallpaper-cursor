@@ -51,18 +51,18 @@ the plugin writes `cursor_theme`. To go back: `./install-plugin.sh
 - **Widget** (`walt/wallpaper-cursor:indicator`): bar capsule showing the
   active cursor theme (glyph + name, name toggleable via `show_label`).
   Click opens the panel, right-click opens the plugin settings.
-- **Panel** (`walt/wallpaper-cursor:board`): active cursor, per-output
-  wallpapers, the folder mapping table, and Previous / Next / Settings
-  buttons. Previous/Next switch the wallpaper on the focused output (the
-  service then follows with the matching cursor).
-- **Pick from disk** (panel section, top): wallpaper-folder and cursor-theme
-  dropdowns populated from `wallpaper_root` / `icon_root` (folder settings
-  with browse buttons — only real on-disk names, cursor themes detected via
-  their `cursors/` dir), an image dropdown for the chosen folder, and a Set
-  wallpaper button applying to the focused output (the service then follows
-  with the matching cursor). Reference pair + copy hint for Settings →
-  Plugins → Folder map included. Folder icons open the corresponding
-  directory (`xdg-open`).
+- **Panel** (`walt/wallpaper-cursor:board`): two jobs only.
+  1. **Set wallpaper** — folder dropdown, image dropdown, Set button
+     (focused output, first known output fallback). The service follows
+     with the matching cursor.
+  2. **Set cursor** — cursor dropdown + Save button. Save writes the
+     `folder = "cursor"` row straight into the plugin settings
+     (`folder_map`), keeping a `.bak-wallpaper-cursor` backup and
+     reloading config so the service adopts it. Shows a Saved note.
+- **Pick from disk**: all dropdowns list real on-disk names (wallpaper
+  subfolders under `wallpaper_root`, cursor themes with a `cursors/` dir
+  under `icon_root`, image files by extension). Two folder shortcut
+  buttons open the roots (`xdg-open`).
 
 Add the widget through the Noctalia Settings UI (Bar → add widget → pick
 the indicator) — do not hand-edit `~/.local/state/noctalia/settings.toml`,

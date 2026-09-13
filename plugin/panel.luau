@@ -1,108 +1,24 @@
 --!nonstrict
--- Noctalia panel entry for wallpaper-cursor.
--- Declarative ui.* tree rendered via panel.render(). Watches
--- wallpaper-cursor.board and re-renders only while open. Falls back to live
--- noctalia.outputs() + noctalia.wallpaperPath() when board state is nil.
--- Plain Luau subset parseable by stock lua 5.4. plugin_api 25 only.
+-- Minimal board: pick a wallpaper, assign its folder a cursor.
+-- Two jobs only: Set wallpaper + Save cursor mapping. Save rewrites just the
+-- folder_map lines of the settings file (with backup) and reloads config so
+-- the service adopts the new rule. Plain Luau subset parseable by stock
+-- lua 5.4. plugin_api 25 only.
 
 local is_open = false
 
--- Pick-section selection (lua 1-based positions into the current option lists).
+-- Pick state (lua 1-based positions into the current option lists).
 local pick_folder_idx = 1
-local pick_cursor_idx = 1
-local default_idx = 1
-local default_touched = false
 local image_idx = 1
--- Last render's apply target, consumed by onApplyWallpaper.
+local pick_cursor_idx = 1
+-- Last render's actions, consumed by the button handlers.
 local last_apply = nil
 local last_connector = nil
+local last_pick = nil
 
-local function basename(path)
-  if type(path) ~= "string" or path == "" then
-    return nil
-  end
-  local base = string.match(path, "([^/]+)$")
-  if base ~= nil and base ~= "" then
-    return base
-  end
-  return path
-end
-
-local function get_board()
-  local ok, board = pcall(function()
-    if noctalia.state ~= nil and noctalia.state.get ~= nil then
-      return noctalia.state.get("wallpaper-cursor.board")
-    end
-    return nil
-  end)
-  if ok then
-    return board
-  end
-  return nil
-end
-
-local function get_cursor(board)
-  if type(board) == "table" and type(board.cursor) == "string" and board.cursor ~= "" then
-    return board.cursor
-  end
-  local ok, c = pcall(function()
-    if noctalia.state ~= nil and noctalia.state.get ~= nil then
-      return noctalia.state.get("wallpaper-cursor.cursor")
-    end
-    return nil
-  end)
-  if ok and type(c) == "string" and c ~= "" then
-    return c
-  end
-  return nil
-end
-
-local function get_folder_map()
-  local ok, m = pcall(function()
-    return noctalia.getConfig("folder_map")
-  end)
-  if ok and type(m) == "table" then
-    return m
-  end
-  return {}
-end
-
-local function get_default_cursor()
-  local ok, d = pcall(function()
-    return noctalia.getConfig("default_cursor")
-  end)
-  if ok and type(d) == "string" and d ~= "" then
-    return d
-  end
-  return nil
-end
-
-local function get_outputs(board)
-  if type(board) == "table" and type(board.outputs) == "table" then
-    return board.outputs
-  end
-  local ok, outs = pcall(function()
-    return noctalia.outputs()
-  end)
-  if not ok or type(outs) ~= "table" then
-    return {}
-  end
-  local result = {}
-  for _, out in ipairs(outs) do
-    if type(out) == "table" and out.name ~= nil and type(out.name) == "string" and out.name ~= "" then
-      local name = out.name
-      local path = nil
-      local ok2, p = pcall(noctalia.wallpaperPath, name)
-      if ok2 then
-        path = p
-      else
-        path = nil
-      end
-      table.insert(result, { name = name, wallpaper = path })
-    end
-  end
-  return result
-end
+local MAP_HEADER = '[plugin_settings."walt/wallpaper-cursor".folder_map]'
+local BACKUP_SUFFIX = ".bak-wallpaper-cursor"
+local IMAGE_EXTS = { png = true, jpg = true, jpeg = true, webp = true, avif = true, bmp = true }
 
 local function expand(path)
   if type(path) ~= "string" or path == "" then
@@ -169,15 +85,59 @@ local function list_cursors(root)
   return themes
 end
 
-local function dirname_of(path)
-  if type(path) ~= "string" then
+local function list_images(dir)
+  if type(dir) ~= "string" or dir == "" then
+    return {}
+  end
+  local ok, names = pcall(function()
+    return noctalia.listDir(dir)
+  end)
+  if not ok or type(names) ~= "table" then
+    return {}
+  end
+  local imgs = {}
+  for _, n in ipairs(names) do
+    if type(n) == "string" and n ~= "" then
+      local ext = string.match(n, "%.([^./]+)$")
+      if ext ~= nil and IMAGE_EXTS[string.lower(ext)] then
+        local ok2, info = pcall(function()
+          return noctalia.fileInfo(dir .. "/" .. n)
+        end)
+        if not ok2 or type(info) ~= "table" or not info.isDir then
+          table.insert(imgs, n)
+        end
+      end
+    end
+  end
+  table.sort(imgs)
+  return imgs
+end
+
+local function short_root(path)
+  if type(path) ~= "string" or path == "" then
+    return ""
+  end
+  local home = nil
+  local ok, h = pcall(function()
+    if noctalia.getenv ~= nil then
+      return noctalia.getenv("HOME")
+    end
     return nil
+  end)
+  if ok and type(h) == "string" and h ~= "" then
+    home = h
+  else
+    local ok2, h2 = pcall(function()
+      return os.getenv("HOME")
+    end)
+    if ok2 and type(h2) == "string" and h2 ~= "" then
+      home = h2
+    end
   end
-  local d = string.match(path, "^(.*)/[^/]*$")
-  if d ~= nil and d ~= "" then
-    return d
+  if home ~= nil and string.sub(path, 1, #home) == home then
+    return "~" .. string.sub(path, #home + 1)
   end
-  return nil
+  return path
 end
 
 local function can_open()
@@ -218,92 +178,6 @@ local function folder_button(dir, tooltip)
   })
 end
 
-local IMAGE_EXTS = { png = true, jpg = true, jpeg = true, webp = true, avif = true, bmp = true }
-
-local function short_root(path)
-  if type(path) ~= "string" or path == "" then
-    return ""
-  end
-  local home = nil
-  local ok, h = pcall(function()
-    if noctalia.getenv ~= nil then
-      return noctalia.getenv("HOME")
-    end
-    return nil
-  end)
-  if ok and type(h) == "string" and h ~= "" then
-    home = h
-  else
-    local ok2, h2 = pcall(function()
-      return os.getenv("HOME")
-    end)
-    if ok2 and type(h2) == "string" and h2 ~= "" then
-      home = h2
-    end
-  end
-  if home ~= nil and string.sub(path, 1, #home) == home then
-    return "~" .. string.sub(path, #home + 1)
-  end
-  return path
-end
-
-local function list_images(dir)
-  if type(dir) ~= "string" or dir == "" then
-    return {}
-  end
-  local ok, names = pcall(function()
-    return noctalia.listDir(dir)
-  end)
-  if not ok or type(names) ~= "table" then
-    return {}
-  end
-  local imgs = {}
-  for _, n in ipairs(names) do
-    if type(n) == "string" and n ~= "" then
-      local ext = string.match(n, "%.([^./]+)$")
-      if ext ~= nil and IMAGE_EXTS[string.lower(ext)] then
-        local ok2, info = pcall(function()
-          return noctalia.fileInfo(dir .. "/" .. n)
-        end)
-        if not ok2 or type(info) ~= "table" or not info.isDir then
-          table.insert(imgs, n)
-        end
-      end
-    end
-  end
-  table.sort(imgs)
-  return imgs
-end
-
-local function first_connector(list)
-  if type(list) ~= "table" then
-    return nil
-  end
-  for _, o in ipairs(list) do
-    if type(o) == "table" and type(o.name) == "string" and o.name ~= "" then
-      return o.name
-    end
-  end
-  return nil
-end
-
--- Focused output first, then first known output; nil when none is known.
-local function target_connector(board, outputs)
-  local ok, out = pcall(function()
-    return noctalia.focusedOutputName()
-  end)
-  if ok and type(out) == "string" and out ~= "" then
-    return out
-  end
-  if type(board) == "table" then
-    local b = first_connector(board.outputs)
-    if b ~= nil then
-      return b
-    end
-  end
-  return first_connector(outputs)
-end
-
 local function clamp_idx(i, n)
   if type(i) ~= "number" or i < 1 then
     return 1
@@ -314,132 +188,232 @@ local function clamp_idx(i, n)
   return math.floor(i)
 end
 
-local function render()
-  local board = get_board()
-  local cursor = get_cursor(board)
-  local unknown = noctalia.tr("panel.unknown")
-  local cursor_text = cursor
-  if type(cursor_text) ~= "string" or cursor_text == "" then
-    cursor_text = unknown
+-- Focused output first, then the service's first known output, then live.
+local function target_connector()
+  local ok, out = pcall(function()
+    return noctalia.focusedOutputName()
+  end)
+  if ok and type(out) == "string" and out ~= "" then
+    return out
   end
-  local outputs = get_outputs(board)
-  local folder_map = get_folder_map()
-  local default_cursor = get_default_cursor()
-  local default_for_row = default_cursor
-  if type(default_for_row) ~= "string" or default_for_row == "" then
-    default_for_row = unknown
-  end
-
-  local keys = {}
-  for k, _ in pairs(folder_map) do
-    if type(k) == "string" then
-      table.insert(keys, k)
+  local okb, board = pcall(function()
+    if noctalia.state ~= nil and noctalia.state.get ~= nil then
+      return noctalia.state.get("wallpaper-cursor.board")
+    end
+    return nil
+  end)
+  if okb and type(board) == "table" and type(board.outputs) == "table" then
+    for _, o in ipairs(board.outputs) do
+      if type(o) == "table" and type(o.name) == "string" and o.name ~= "" then
+        return o.name
+      end
     end
   end
-  table.sort(keys)
+  local oko, outs = pcall(function()
+    return noctalia.outputs()
+  end)
+  if oko and type(outs) == "table" then
+    for _, o in ipairs(outs) do
+      if type(o) == "table" and type(o.name) == "string" and o.name ~= "" then
+        return o.name
+      end
+    end
+  end
+  return nil
+end
 
+local function toml_escape(s)
+  s = string.gsub(s, "\\", "\\\\")
+  s = string.gsub(s, '"', '\\"')
+  return s
+end
+
+local function bare_key_ok(s)
+  return string.match(s, "^[A-Za-z0-9_%-]+$") ~= nil
+end
+
+local function format_key(s)
+  if bare_key_ok(s) then
+    return s
+  end
+  return '"' .. toml_escape(s) .. '"'
+end
+
+-- Parse one "key = value" row. Returns indent + key, or nil for headers,
+-- comments, blanks, and malformed rows. Quoted keys honour \" escapes.
+local function parse_row(line)
+  local indent = string.match(line, "^(%s*)") or ""
+  local rest = string.sub(line, #indent + 1)
+  if rest == "" or string.sub(rest, 1, 1) == "#" then
+    return nil
+  end
+  if string.sub(rest, 1, 1) == '"' then
+    local i = 2
+    local buf = {}
+    while i <= #rest do
+      local ch = string.sub(rest, i, i)
+      if ch == "\\" and i < #rest then
+        table.insert(buf, string.sub(rest, i + 1, i + 1))
+        i = i + 2
+      elseif ch == '"' then
+        if string.match(string.sub(rest, i + 1), "^%s*=%s*.+$") then
+          return indent, table.concat(buf)
+        end
+        return nil
+      else
+        table.insert(buf, ch)
+        i = i + 1
+      end
+    end
+    return nil
+  end
+  local lhs = string.match(rest, "^(.-)%s*=%s*.+$")
+  if lhs == nil or lhs == "" then
+    return nil
+  end
+  return indent, lhs
+end
+
+local function trim(s)
+  return string.match(s, "^%s*(.-)%s*$") or ""
+end
+
+-- Candidate settings files, first readable wins. Mirrors Noctalia's
+-- NOCTALIA_STATE_HOME / XDG_STATE_HOME override order, then the default.
+local function settings_candidates()
+  local cands = {}
+  local function getenv(n)
+    local ok, v = pcall(function()
+      if noctalia.getenv ~= nil then
+        return noctalia.getenv(n)
+      end
+      return nil
+    end)
+    if ok and type(v) == "string" and v ~= "" then
+      return v
+    end
+    return nil
+  end
+  local override = getenv("NOCTALIA_STATE_HOME")
+  if override ~= nil then
+    table.insert(cands, override .. "/settings.toml")
+    table.insert(cands, override .. "/noctalia/settings.toml")
+  end
+  local xdg = getenv("XDG_STATE_HOME")
+  if xdg ~= nil then
+    table.insert(cands, xdg .. "/noctalia/settings.toml")
+  end
+  local home = getenv("HOME")
+  if home == nil then
+    local ok, h = pcall(function()
+      return os.getenv("HOME")
+    end)
+    if ok and type(h) == "string" and h ~= "" then
+      home = h
+    end
+  end
+  if home ~= nil then
+    table.insert(cands, home .. "/.local/state/noctalia/settings.toml")
+  end
+  return cands
+end
+
+local function find_settings()
+  for _, p in ipairs(settings_candidates()) do
+    local ok, content = pcall(function()
+      return noctalia.readFile(p)
+    end)
+    if ok and type(content) == "string" then
+      return p, content
+    end
+  end
+  return nil, nil
+end
+
+-- Write one folder -> cursor row into the settings file's folder_map table.
+-- Surgical: every other byte stays identical. Returns true, or false + err.
+local function save_mapping(folder, cursor)
+  if type(folder) ~= "string" or folder == "" then
+    return false, "no folder selected"
+  end
+  if type(cursor) ~= "string" or cursor == "" then
+    return false, "no cursor selected"
+  end
+  local path, content = find_settings()
+  if path == nil or content == nil then
+    return false, "settings file not found"
+  end
+  local lines = {}
+  for line in (content .. "\n"):gmatch("([^\n]*)\n") do
+    table.insert(lines, line)
+  end
+  local new_line = format_key(folder) .. ' = "' .. toml_escape(cursor) .. '"'
+  local header_at = nil
+  for i, line in ipairs(lines) do
+    if trim(line) == MAP_HEADER then
+      header_at = i
+      break
+    end
+  end
+  if header_at ~= nil then
+    local stop_at = #lines + 1
+    for i = header_at + 1, #lines do
+      if string.match(lines[i], "^%s*%[") then
+        stop_at = i
+        break
+      end
+    end
+    local indent = "    "
+    local placed = false
+    for i = header_at + 1, stop_at - 1 do
+      local ind, key = parse_row(lines[i])
+      if ind ~= nil then
+        if ind ~= "" then
+          indent = ind
+        end
+        if key == folder then
+          lines[i] = ind .. format_key(folder) .. ' = "' .. toml_escape(cursor) .. '"'
+          placed = true
+          break
+        end
+      end
+    end
+    if not placed then
+      table.insert(lines, stop_at, indent .. new_line)
+    end
+  else
+    if #lines > 0 and lines[#lines] ~= "" then
+      table.insert(lines, "")
+    end
+    table.insert(lines, MAP_HEADER)
+    table.insert(lines, "    " .. new_line)
+  end
+  local new_content = table.concat(lines, "\n")
+  local okb, wrote_b = pcall(noctalia.writeFile, path .. BACKUP_SUFFIX, content)
+  if not okb or not wrote_b then
+    return false, "backup failed"
+  end
+  local okw, wrote_w = pcall(noctalia.writeFile, path, new_content)
+  if not okw or not wrote_w then
+    return false, "write failed"
+  end
+  noctalia.runAsync({ "noctalia", "msg", "config-reload" })
+  noctalia.notify(noctalia.tr("panel.saved"), folder .. " → " .. cursor)
+  noctalia.log("wallpaper-cursor: mapping saved: " .. folder .. " -> " .. cursor)
+  return true
+end
+
+local function render()
+  local unknown = noctalia.tr("panel.unknown")
   local wall_root = get_root("wallpaper_root", "~/Pictures/Wallpapers")
   local icon_root = get_root("icon_root", "~/.local/share/icons")
   local open_tip = noctalia.tr("panel.open_folder")
 
-  local output_rows = {}
-  table.insert(output_rows, ui.label({ text = noctalia.tr("panel.outputs"), fontWeight = "bold" }))
-  for _, o in ipairs(outputs) do
-    local name = nil
-    local wall = nil
-    if type(o) == "table" then
-      name = o.name
-      wall = o.wallpaper
-    end
-    local disp_name = unknown
-    if type(name) == "string" and name ~= "" then
-      disp_name = name
-    end
-    local base = basename(wall)
-    local disp_wall = unknown
-    if base ~= nil then
-      disp_wall = base
-    end
-    local cells = {}
-    local fb = folder_button(dirname_of(wall) or wall_root, open_tip)
-    if fb ~= nil then
-      table.insert(cells, fb)
-    end
-    table.insert(cells, ui.label({ text = disp_name }))
-    table.insert(cells, ui.label({ text = disp_wall }))
-    table.insert(output_rows, ui.row({ gap = 8, align = "center" }, cells))
-  end
-
-  local mapping_children = {}
-  table.insert(mapping_children, ui.label({ text = noctalia.tr("panel.mapping"), fontWeight = "bold" }))
-  for _, folder in ipairs(keys) do
-    local c = folder_map[folder]
-    if type(c) ~= "string" then
-      c = tostring(c)
-    end
-    -- Open the matching wallpaper subfolder when the key names one,
-    -- otherwise fall back to the wallpaper root.
-    local dir = wall_root
-    if type(wall_root) == "string" and wall_root ~= "" then
-      local cand = wall_root .. "/" .. folder
-      local okd, info = pcall(function()
-        return noctalia.fileInfo(cand)
-      end)
-      if okd and type(info) == "table" and info.isDir then
-        dir = cand
-      end
-    end
-    local cells = {}
-    local fb = folder_button(dir, open_tip)
-    if fb ~= nil then
-      table.insert(cells, fb)
-    end
-    table.insert(cells, ui.label({ text = folder .. " → " .. c }))
-    table.insert(mapping_children, ui.row({ gap = 8, align = "center" }, cells))
-  end
-  local def_cells = {}
-  local dfb = folder_button(icon_root, open_tip)
-  if dfb ~= nil then
-    table.insert(def_cells, dfb)
-  end
-  table.insert(def_cells, ui.label({ text = noctalia.tr("panel.default_row", { cursor = default_for_row }) }))
-  table.insert(mapping_children, ui.row({ gap = 8, align = "center" }, def_cells))
-
-  -- Pick-from-disk reference: discovered names the user can copy into Settings.
   local folders = list_subdirs(wall_root)
   local cursors = list_cursors(icon_root)
   pick_folder_idx = clamp_idx(pick_folder_idx, math.max(#folders, 1))
   pick_cursor_idx = clamp_idx(pick_cursor_idx, math.max(#cursors, 1))
-  if not default_touched and type(default_for_row) == "string" then
-    for i, c in ipairs(cursors) do
-      if c == default_for_row then
-        default_idx = i
-        break
-      end
-    end
-  end
-  default_idx = clamp_idx(default_idx, math.max(#cursors, 1))
-  local pick_children = {}
-  table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_title"), fontWeight = "bold" }))
-  table.insert(pick_children, ui.label({ text = short_root(wall_root) .. "  •  " .. short_root(icon_root) }))
-  table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_folder") }))
-  if #folders > 0 then
-    -- selectedIndex is 0-based on the host; our indices are lua 1-based.
-    table.insert(pick_children, ui.select({ options = folders, selectedIndex = pick_folder_idx - 1, onChange = "onPickFolder" }))
-  else
-    table.insert(pick_children, ui.label({ text = unknown }))
-  end
-  table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_cursor") }))
-  if #cursors > 0 then
-    table.insert(pick_children, ui.select({ options = cursors, selectedIndex = pick_cursor_idx - 1, onChange = "onPickCursor" }))
-  else
-    table.insert(pick_children, ui.label({ text = unknown }))
-  end
-  local pf = folders[pick_folder_idx] or unknown
-  local pc = cursors[pick_cursor_idx] or unknown
-  table.insert(pick_children, ui.label({ text = pf .. " => " .. pc }))
-  -- Wallpaper picker: images inside the chosen folder, applied to the
-  -- focused output (first known output when focus is unknown).
+
   local pick_folder = folders[pick_folder_idx]
   local image_dir = nil
   if type(pick_folder) == "string" and type(wall_root) == "string" and wall_root ~= "" then
@@ -447,54 +421,78 @@ local function render()
   end
   local images = list_images(image_dir)
   image_idx = clamp_idx(image_idx, math.max(#images, 1))
-  table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_image") }))
-  if #images > 0 then
-    table.insert(pick_children, ui.select({ options = images, selectedIndex = image_idx - 1, onChange = "onPickImage" }))
-  else
-    table.insert(pick_children, ui.label({ text = noctalia.tr("panel.no_images") }))
-  end
-  last_connector = target_connector(board, outputs)
+
+  last_connector = target_connector()
   last_apply = nil
   if image_dir ~= nil and images[image_idx] ~= nil then
     last_apply = { dir = image_dir, image = images[image_idx] }
   end
-  table.insert(pick_children, ui.button({
-    text = noctalia.tr("panel.apply"),
-    variant = "primary",
-    enabled = last_apply ~= nil and last_connector ~= nil,
-    onClick = "onApplyWallpaper",
-  }))
-  table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_hint") }))
-  table.insert(pick_children, ui.label({ text = noctalia.tr("panel.default_select") }))
-  if #cursors > 0 then
-    table.insert(pick_children, ui.select({ options = cursors, selectedIndex = default_idx - 1, onChange = "onDefaultCursor" }))
-  else
-    table.insert(pick_children, ui.label({ text = unknown }))
+  last_pick = nil
+  local pick_cursor = cursors[pick_cursor_idx]
+  if type(pick_folder) == "string" and type(pick_cursor) == "string" then
+    last_pick = { folder = pick_folder, cursor = pick_cursor }
+  end
+  local pf = pick_folder or unknown
+  local pc = pick_cursor or unknown
+
+  local shortcut_cells = {}
+  local wb = folder_button(wall_root, open_tip)
+  if wb ~= nil then
+    table.insert(shortcut_cells, wb)
+    table.insert(shortcut_cells, ui.label({ text = short_root(wall_root) }))
+  end
+  local ib = folder_button(icon_root, open_tip)
+  if ib ~= nil then
+    table.insert(shortcut_cells, ib)
+    table.insert(shortcut_cells, ui.label({ text = short_root(icon_root) }))
   end
 
-  panel.render(ui.column({ gap = 12 }, {
+  local body = {
     ui.row({ gap = 8, align = "center" }, {
       ui.glyph({ name = "photo", size = 18 }),
       ui.label({ text = noctalia.tr("panel.title"), fontSize = 16, fontWeight = "bold" }),
     }),
     ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
-    ui.row({ gap = 8 }, {
-      ui.label({ text = noctalia.tr("panel.active_cursor") }),
-      ui.label({ text = cursor_text, fontWeight = "bold" }),
-    }),
-    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
-    ui.column({ gap = 8 }, pick_children),
-    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
-    ui.column({ gap = 8 }, output_rows),
-    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
-    ui.column({ gap = 8 }, mapping_children),
-    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
-    ui.column({ gap = 8 }, {
-      ui.button({ text = noctalia.tr("panel.previous"), onClick = "onPrev" }),
-      ui.button({ text = noctalia.tr("panel.next"), onClick = "onNext" }),
-      ui.button({ text = noctalia.tr("panel.settings"), onClick = "onSettings" }),
-    }),
+    ui.label({ text = noctalia.tr("panel.pick_folder"), fontWeight = "bold" }),
+  }
+  if #folders > 0 then
+    -- selectedIndex is 0-based on the host; our indices are lua 1-based.
+    table.insert(body, ui.select({ options = folders, selectedIndex = pick_folder_idx - 1, onChange = "onPickFolder" }))
+  else
+    table.insert(body, ui.label({ text = unknown }))
+  end
+  table.insert(body, ui.label({ text = noctalia.tr("panel.pick_image"), fontWeight = "bold" }))
+  if #images > 0 then
+    table.insert(body, ui.select({ options = images, selectedIndex = image_idx - 1, onChange = "onPickImage" }))
+  else
+    table.insert(body, ui.label({ text = noctalia.tr("panel.no_images") }))
+  end
+  table.insert(body, ui.button({
+    text = noctalia.tr("panel.apply"),
+    variant = "default",
+    enabled = last_apply ~= nil and last_connector ~= nil,
+    onClick = "onApplyWallpaper",
   }))
+  table.insert(body, ui.separator({ color = "outline", thickness = 1, spacing = 4 }))
+  table.insert(body, ui.label({ text = noctalia.tr("panel.pick_cursor"), fontWeight = "bold" }))
+  if #cursors > 0 then
+    table.insert(body, ui.select({ options = cursors, selectedIndex = pick_cursor_idx - 1, onChange = "onPickCursor" }))
+  else
+    table.insert(body, ui.label({ text = unknown }))
+  end
+  table.insert(body, ui.label({ text = pf .. " => " .. pc }))
+  table.insert(body, ui.button({
+    text = noctalia.tr("panel.save"),
+    variant = "primary",
+    enabled = last_pick ~= nil,
+    onClick = "onSaveMapping",
+  }))
+  if #shortcut_cells > 0 then
+    table.insert(body, ui.separator({ color = "outline", thickness = 1, spacing = 4 }))
+    table.insert(body, ui.row({ gap = 8, align = "center" }, shortcut_cells))
+  end
+
+  panel.render(ui.column({ gap = 12 }, body))
 end
 
 function onOpen(_context)
@@ -504,28 +502,6 @@ end
 
 function onClose()
   is_open = false
-end
-
-function onPrev()
-  local out = noctalia.focusedOutputName()
-  if out ~= nil then
-    noctalia.runAsync({ "noctalia", "msg", "wallpaper-previous", out })
-  else
-    noctalia.runAsync({ "noctalia", "msg", "wallpaper-previous" })
-  end
-end
-
-function onNext()
-  local out = noctalia.focusedOutputName()
-  if out ~= nil then
-    noctalia.runAsync({ "noctalia", "msg", "wallpaper-next", out })
-  else
-    noctalia.runAsync({ "noctalia", "msg", "wallpaper-next" })
-  end
-end
-
-function onSettings()
-  noctalia.openSettings()
 end
 
 -- ui.select reports the chosen position as a 0-based index string.
@@ -540,14 +516,6 @@ function onPickCursor(value)
   local i = tonumber(value)
   if i ~= nil then
     pick_cursor_idx = i + 1
-  end
-end
-
-function onDefaultCursor(value)
-  local i = tonumber(value)
-  if i ~= nil then
-    default_idx = i + 1
-    default_touched = true
   end
 end
 
@@ -570,6 +538,17 @@ function onApplyWallpaper()
     noctalia.log("wallpaper-cursor: setWallpaper failed: " .. tostring(err))
   else
     noctalia.log("wallpaper-cursor: wallpaper set [" .. tostring(last_connector) .. "] " .. full)
+  end
+end
+
+function onSaveMapping()
+  if type(last_pick) ~= "table" then
+    return
+  end
+  local ok, err = save_mapping(last_pick.folder, last_pick.cursor)
+  if not ok then
+    noctalia.notify(noctalia.tr("panel.save_failed"), tostring(err))
+    noctalia.log("wallpaper-cursor: mapping save failed: " .. tostring(err))
   end
 end
 
