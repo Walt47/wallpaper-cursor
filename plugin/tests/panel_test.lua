@@ -16,7 +16,8 @@ local has_xdg = true
 -- listed with isDir=false; anything else is missing (nil).
 local fs_children = {
   ["/pics/Wallpapers"] = { "Umineko", "Others", "loose.txt" },
-  ["/pics/Wallpapers/Umineko"] = {},
+  ["/pics/Wallpapers/Umineko"] = { "Beatrice.png", "Erika.JPG", "notes.txt", "thumbs" },
+  ["/pics/Wallpapers/Umineko/thumbs"] = {},
   ["/pics/Wallpapers/Others"] = {},
   ["/icons"] = { "Beatrice", "Phosphophyllite", "hicolor", "notes.txt" },
   ["/icons/Beatrice"] = {},
@@ -27,10 +28,13 @@ local fs_children = {
 }
 local fs_files = {
   ["/pics/Wallpapers/loose.txt"] = true,
+  ["/pics/Wallpapers/Umineko/Beatrice.png"] = true,
+  ["/pics/Wallpapers/Umineko/Erika.JPG"] = true,
+  ["/pics/Wallpapers/Umineko/notes.txt"] = true,
   ["/icons/notes.txt"] = true,
 }
 
-local calls = { run = {}, settings = 0, logs = {} }
+local calls = { run = {}, settings = 0, logs = {}, applied = {} }
 local watchers = {}
 
 local tr_templates = {
@@ -43,6 +47,15 @@ local tr_templates = {
   ["panel.settings"] = "Settings",
   ["panel.unknown"] = "Unknown",
   ["panel.default_row"] = "Default: {cursor}",
+  ["panel.pick_title"] = "Pick",
+  ["panel.pick_folder"] = "Folder",
+  ["panel.pick_cursor"] = "Cursor",
+  ["panel.pick_image"] = "Image",
+  ["panel.apply"] = "Apply",
+  ["panel.no_images"] = "No images here",
+  ["panel.pick_hint"] = "Hint",
+  ["panel.default_select"] = "DefSel",
+  ["panel.open_folder"] = "Open",
 }
 
 noctalia = {
@@ -57,6 +70,11 @@ noctalia = {
   end,
   openSettings = function() calls.settings = calls.settings + 1 end,
   log = function(m) table.insert(calls.logs, m) end,
+  getenv = function(n) if n == "HOME" then return "/home/test" end return nil end,
+  setWallpaper = function(conn, path)
+    table.insert(calls.applied, { conn = conn, path = path })
+    return true
+  end,
   expandPath = function(p) return (string.gsub(p, "^~", "/home/test")) end,
   listDir = function(path) return fs_children[path] end,
   fileInfo = function(path)
@@ -394,25 +412,38 @@ end
 local function find_folder_buttons(tree)
   local out = {}
   walk(tree, function(n)
-    if n.type == "button" and type(n.props) == "table" and n.props.glyph == "folder" then
+    if n.type == "button" and type(n.props) == "table" and n.props.glyph == "photo" then
       table.insert(out, n)
     end
   end)
   return out
 end
 
-local sels = find_selects(t9)
-check("select-count", #sels == 3, #sels)
--- folder select: sorted subdirs, loose.txt excluded
-check("folder-options", sels[1] ~= nil and sels[1].props.options ~= nil
-  and #sels[1].props.options == 2
-  and sels[1].props.options[1] == "Others"
-  and sels[1].props.options[2] == "Umineko")
+local function find_select(tree, handler)
+  local found = nil
+  walk(tree, function(n)
+    if found == nil and n.type == "select" and type(n.props) == "table"
+      and n.props.onChange == handler then
+      found = n
+    end
+  end)
+  return found
+end
+
+-- t9 shows Others (idx 1, empty): folder/cursor/default selects, no image select
+local fsel = find_select(t9, "onPickFolder")
+local csel = find_select(t9, "onPickCursor")
+local dsel = find_select(t9, "onDefaultCursor")
+check("folder-options", fsel ~= nil and fsel.props.options ~= nil
+  and #fsel.props.options == 2
+  and fsel.props.options[1] == "Others"
+  and fsel.props.options[2] == "Umineko")
 -- cursor select: cursors/ marker only (hicolor + notes.txt excluded)
-local copts = (sels[2] ~= nil and sels[2].props.options) or {}
+local copts = (csel ~= nil and csel.props.options) or {}
 check("cursor-options", #copts == 2 and copts[1] == "Beatrice" and copts[2] == "Phosphophyllite")
 -- default select presets nothing known (Adwaita not installed) -> first item
-check("default-select-first", sels[3] ~= nil and sels[3].props.selectedIndex == 0)
+check("default-select-first", dsel ~= nil and dsel.props.selectedIndex == 0)
+check("image-select-absent-empty", find_select(t9, "onPickImage") == nil)
 -- preview uses => (keeps → counts stable) with first pair selected
 local texts9 = collect_texts(t9)
 check("preview-pair", texts_contain(texts9, "Others => Beatrice"))
@@ -451,6 +482,67 @@ check("nil-roots-no-crash", ok9)
 local texts9b = collect_texts(latest())
 check("nil-roots-preview", texts_contain(texts9b, "=>"))
 check("nil-roots-no-selects", #find_selects(latest()) == 0)
+onClose()
+
+-- 10: image picker lists folder images; apply targets focused output
+config.folder_map = { Umineko = "Beatrice" }
+config.default_cursor = "Adwaita"
+config.wallpaper_root = "/pics/Wallpapers"
+config.icon_root = "/icons"
+has_xdg = true
+focused_name = "eDP-1"
+noctalia.state._s["wallpaper-cursor.board"] = {
+  cursor = "Beatrice",
+  outputs = { { name = "eDP-1", wallpaper = "/pics/Wallpapers/Umineko/Beatrice.png" } },
+}
+onPickFolder("0") -- Others (empty): no image select, apply disabled
+onPickFolder("0") -- Others (empty): no image select, apply disabled
+panel.renders = {}
+onOpen(nil)
+local t10 = latest()
+local sels10 = find_selects(t10)
+check("empty-three-selects", #sels10 == 3, #sels10)
+check("image-select-absent-empty", find_select(t10, "onPickImage") == nil)
+check("image-empty-label", texts_contain(collect_texts(t10), "No images"))
+local apply_btn = nil
+walk(t10, function(n)
+  if n.type == "button" and type(n.props) == "table" and n.props.onClick == "onApplyWallpaper" then
+    apply_btn = n
+  end
+end)
+check("apply-disabled-empty", apply_btn ~= nil and apply_btn.props.enabled == false)
+calls.applied = {}
+onApplyWallpaper()
+check("apply-noop-empty", #calls.applied == 0, #calls.applied)
+-- Umineko (index "1"): sorted images, notes.txt + thumbs dir excluded
+onPickFolder("1")
+panel.renders = {}
+onOpen(nil)
+local t10b = latest()
+local imopts = nil
+for _, s in ipairs(find_selects(t10b)) do
+  if s.props.onChange == "onPickImage" then imopts = s.props.options end
+end
+check("image-options", imopts ~= nil and #imopts == 2 and imopts[1] == "Beatrice.png" and imopts[2] == "Erika.JPG")
+-- apply targets the focused output with the full path
+calls.applied = {}
+onApplyWallpaper()
+check("apply-focused", #calls.applied == 1 and calls.applied[1].conn == "eDP-1" and calls.applied[1].path == "/pics/Wallpapers/Umineko/Beatrice.png", calls.applied[1] and (tostring(calls.applied[1].conn) .. "|" .. tostring(calls.applied[1].path)))
+-- second image selectable via the same 0-based contract
+onPickImage("1")
+panel.renders = {}
+onOpen(nil)
+calls.applied = {}
+onApplyWallpaper()
+check("apply-second-image", #calls.applied == 1 and calls.applied[1].path == "/pics/Wallpapers/Umineko/Erika.JPG")
+-- focus unknown -> first board output fallback
+focused_name = nil
+calls.applied = {}
+onApplyWallpaper()
+check("apply-fallback-output", #calls.applied == 1 and calls.applied[1].conn == "eDP-1")
+focused_name = "eDP-1"
+-- current roots are displayed so a stale root is self-evident
+check("roots-line", texts_contain(collect_texts(latest()), "/pics/Wallpapers"))
 onClose()
 
 if failures > 0 then print(failures .. " FAILURES") os.exit(1) else print("ALL PASS") end

@@ -30,6 +30,9 @@
   "panel.pick_title": "Pick from disk",
   "panel.pick_folder": "Wallpaper folder",
   "panel.pick_cursor": "Cursor theme",
+  "panel.pick_image": "Wallpaper image",
+  "panel.apply": "Set wallpaper",
+  "panel.no_images": "No images in this folder",
   "panel.pick_hint": "Copy exact names into Settings → Plugins → Folder map",
   "panel.default_select": "Default cursor (reference)",
   "panel.open_folder": "Open folder"

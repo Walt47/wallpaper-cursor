@@ -12,6 +12,10 @@ local pick_folder_idx = 1
 local pick_cursor_idx = 1
 local default_idx = 1
 local default_touched = false
+local image_idx = 1
+-- Last render's apply target, consumed by onApplyWallpaper.
+local last_apply = nil
+local last_connector = nil
 
 local function basename(path)
   if type(path) ~= "string" or path == "" then
@@ -201,7 +205,7 @@ local function folder_button(dir, tooltip)
     return nil
   end
   return ui.button({
-    glyph = "folder",
+    glyph = "photo",
     variant = "ghost",
     controlSize = "sm",
     width = 28,
@@ -212,6 +216,92 @@ local function folder_button(dir, tooltip)
       open_path(dir)
     end,
   })
+end
+
+local IMAGE_EXTS = { png = true, jpg = true, jpeg = true, webp = true, avif = true, bmp = true }
+
+local function short_root(path)
+  if type(path) ~= "string" or path == "" then
+    return ""
+  end
+  local home = nil
+  local ok, h = pcall(function()
+    if noctalia.getenv ~= nil then
+      return noctalia.getenv("HOME")
+    end
+    return nil
+  end)
+  if ok and type(h) == "string" and h ~= "" then
+    home = h
+  else
+    local ok2, h2 = pcall(function()
+      return os.getenv("HOME")
+    end)
+    if ok2 and type(h2) == "string" and h2 ~= "" then
+      home = h2
+    end
+  end
+  if home ~= nil and string.sub(path, 1, #home) == home then
+    return "~" .. string.sub(path, #home + 1)
+  end
+  return path
+end
+
+local function list_images(dir)
+  if type(dir) ~= "string" or dir == "" then
+    return {}
+  end
+  local ok, names = pcall(function()
+    return noctalia.listDir(dir)
+  end)
+  if not ok or type(names) ~= "table" then
+    return {}
+  end
+  local imgs = {}
+  for _, n in ipairs(names) do
+    if type(n) == "string" and n ~= "" then
+      local ext = string.match(n, "%.([^./]+)$")
+      if ext ~= nil and IMAGE_EXTS[string.lower(ext)] then
+        local ok2, info = pcall(function()
+          return noctalia.fileInfo(dir .. "/" .. n)
+        end)
+        if not ok2 or type(info) ~= "table" or not info.isDir then
+          table.insert(imgs, n)
+        end
+      end
+    end
+  end
+  table.sort(imgs)
+  return imgs
+end
+
+local function first_connector(list)
+  if type(list) ~= "table" then
+    return nil
+  end
+  for _, o in ipairs(list) do
+    if type(o) == "table" and type(o.name) == "string" and o.name ~= "" then
+      return o.name
+    end
+  end
+  return nil
+end
+
+-- Focused output first, then first known output; nil when none is known.
+local function target_connector(board, outputs)
+  local ok, out = pcall(function()
+    return noctalia.focusedOutputName()
+  end)
+  if ok and type(out) == "string" and out ~= "" then
+    return out
+  end
+  if type(board) == "table" then
+    local b = first_connector(board.outputs)
+    if b ~= nil then
+      return b
+    end
+  end
+  return first_connector(outputs)
 end
 
 local function clamp_idx(i, n)
@@ -331,6 +421,7 @@ local function render()
   default_idx = clamp_idx(default_idx, math.max(#cursors, 1))
   local pick_children = {}
   table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_title"), fontWeight = "bold" }))
+  table.insert(pick_children, ui.label({ text = short_root(wall_root) .. "  •  " .. short_root(icon_root) }))
   table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_folder") }))
   if #folders > 0 then
     -- selectedIndex is 0-based on the host; our indices are lua 1-based.
@@ -347,6 +438,32 @@ local function render()
   local pf = folders[pick_folder_idx] or unknown
   local pc = cursors[pick_cursor_idx] or unknown
   table.insert(pick_children, ui.label({ text = pf .. " => " .. pc }))
+  -- Wallpaper picker: images inside the chosen folder, applied to the
+  -- focused output (first known output when focus is unknown).
+  local pick_folder = folders[pick_folder_idx]
+  local image_dir = nil
+  if type(pick_folder) == "string" and type(wall_root) == "string" and wall_root ~= "" then
+    image_dir = wall_root .. "/" .. pick_folder
+  end
+  local images = list_images(image_dir)
+  image_idx = clamp_idx(image_idx, math.max(#images, 1))
+  table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_image") }))
+  if #images > 0 then
+    table.insert(pick_children, ui.select({ options = images, selectedIndex = image_idx - 1, onChange = "onPickImage" }))
+  else
+    table.insert(pick_children, ui.label({ text = noctalia.tr("panel.no_images") }))
+  end
+  last_connector = target_connector(board, outputs)
+  last_apply = nil
+  if image_dir ~= nil and images[image_idx] ~= nil then
+    last_apply = { dir = image_dir, image = images[image_idx] }
+  end
+  table.insert(pick_children, ui.button({
+    text = noctalia.tr("panel.apply"),
+    variant = "primary",
+    enabled = last_apply ~= nil and last_connector ~= nil,
+    onClick = "onApplyWallpaper",
+  }))
   table.insert(pick_children, ui.label({ text = noctalia.tr("panel.pick_hint") }))
   table.insert(pick_children, ui.label({ text = noctalia.tr("panel.default_select") }))
   if #cursors > 0 then
@@ -366,11 +483,11 @@ local function render()
       ui.label({ text = cursor_text, fontWeight = "bold" }),
     }),
     ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
+    ui.column({ gap = 8 }, pick_children),
+    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
     ui.column({ gap = 8 }, output_rows),
     ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
     ui.column({ gap = 8 }, mapping_children),
-    ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
-    ui.column({ gap = 8 }, pick_children),
     ui.separator({ color = "outline", thickness = 1, spacing = 4 }),
     ui.column({ gap = 8 }, {
       ui.button({ text = noctalia.tr("panel.previous"), onClick = "onPrev" }),
@@ -431,6 +548,28 @@ function onDefaultCursor(value)
   if i ~= nil then
     default_idx = i + 1
     default_touched = true
+  end
+end
+
+function onPickImage(value)
+  local i = tonumber(value)
+  if i ~= nil then
+    image_idx = i + 1
+  end
+end
+
+function onApplyWallpaper()
+  if type(last_apply) ~= "table" or last_connector == nil then
+    return
+  end
+  local full = last_apply.dir .. "/" .. last_apply.image
+  local ok, err = pcall(function()
+    return noctalia.setWallpaper(last_connector, full)
+  end)
+  if not ok then
+    noctalia.log("wallpaper-cursor: setWallpaper failed: " .. tostring(err))
+  else
+    noctalia.log("wallpaper-cursor: wallpaper set [" .. tostring(last_connector) .. "] " .. full)
   end
 end
 
