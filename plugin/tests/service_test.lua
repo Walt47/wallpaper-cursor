@@ -11,13 +11,10 @@ local config = {
   cursor_size = 24,
   enable_notifications = true,
   poll_interval_ms = 2000,
-  enforce_dark_mode = true,
 }
 local outputs = { { name = "eDP-1" } }
 local wallpapers = { ["eDP-1"] = "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png" }
-local theme_mode = "dark"
-local theme_get_fail = false
-local commands = { mmsg = true, gsettings = true }
+local commands = { mmsg = true, gsettings = true, noctalia = true }
 
 local calls = { run = {}, logs = {}, notifies = {}, errors = {}, intervals = {}, writes = 0 }
 
@@ -29,15 +26,7 @@ noctalia = {
   runAsync = function(argv, cb)
     table.insert(calls.run, argv)
     if cb then
-      if argv[3] == "theme-mode-get" then
-        if theme_get_fail then
-          cb({ exitCode = 1, stdout = "", stderr = "boom" })
-        else
-          cb({ exitCode = 0, stdout = (theme_mode or "dark") .. "\n", stderr = "" })
-        end
-      else
-        cb({ exitCode = 0, stdout = "", stderr = "" })
-      end
+      cb({ exitCode = 0, stdout = "", stderr = "" })
     end
     return true
   end,
@@ -202,8 +191,9 @@ check("board-nil-empty", board ~= nil and board.outputs[1].name == "DP-1" and bo
 check("board-nil-republishes", board_publishes == 2, board_publishes)
 noctalia.state.set = orig_state_set
 
--- 16: dark-mode enforcement runs on switches only
-commands["noctalia"] = true
+-- 16: theme mode is never touched: switches only change the cursor.
+-- The noctalia CLI stays available in the harness so any theme-mode IPC
+-- would be recorded; the checks below lock in zero such calls.
 local function count_theme(op)
   local n = 0
   for _, argv in ipairs(calls.run) do
@@ -211,40 +201,17 @@ local function count_theme(op)
   end
   return n
 end
-local function last_theme_set()
-  for i = #calls.run, 1, -1 do
-    if calls.run[i][3] == "theme-mode-set" then return calls.run[i] end
-  end
-  return nil
-end
--- already dark + switch -> get consulted, no set (apply still ran)
-theme_mode = "dark"
 wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Land of the Lustrous/Bort.png"
 local gets0, sets0 = count_theme("theme-mode-get"), count_theme("theme-mode-set")
 update()
-check("dark-no-set", cursor() == "Phosphophyllite" and count_theme("theme-mode-set") == sets0, cursor())
-check("dark-get-consulted", count_theme("theme-mode-get") == gets0 + 1, count_theme("theme-mode-get") - gets0)
--- light + switch -> exactly one set back to dark with exact argv
-theme_mode = "light"
+check("switch-cursor", cursor() == "Phosphophyllite", cursor())
+check("switch-no-theme-get", count_theme("theme-mode-get") == gets0, count_theme("theme-mode-get") - gets0)
+check("switch-no-theme-set", count_theme("theme-mode-set") == sets0, count_theme("theme-mode-set") - sets0)
+-- switch back -> cursor applies, still zero theme-mode IPC
 wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Umineko/Beatrice.png"
 update()
-local set_argv = last_theme_set()
-check("light-sets-dark", cursor() == "Beatrice" and count_theme("theme-mode-set") == sets0 + 1, cursor())
-check("light-set-argv", set_argv ~= nil and #set_argv == 4 and set_argv[1] == "noctalia" and set_argv[2] == "msg" and set_argv[3] == "theme-mode-set" and set_argv[4] == "dark")
--- disabled + light + switch -> no set at all
-config.enforce_dark_mode = false
-theme_mode = "light"
-wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Others/Reverend.png"
-local sets1 = count_theme("theme-mode-set")
-update()
-check("disabled-no-set", cursor() == "Adwaita" and count_theme("theme-mode-set") == sets1, cursor())
-config.enforce_dark_mode = true
--- get failure + switch -> no crash, no set
-theme_get_fail = true
-wallpapers["eDP-1"] = "/home/walt/Pictures/Wallpapers/Land of the Lustrous/Bort.png"
-local ok16 = pcall(function() update() end)
-check("getfail-no-crash", ok16 and cursor() == "Phosphophyllite" and count_theme("theme-mode-set") == sets1, cursor())
-theme_get_fail = false
+check("switch2-cursor", cursor() == "Beatrice", cursor())
+check("switch2-no-theme-set", count_theme("theme-mode-set") == sets0, count_theme("theme-mode-set") - sets0)
 -- steady poll (no switch) -> theme IPC untouched
 local gets2, sets2 = count_theme("theme-mode-get"), count_theme("theme-mode-set")
 update()

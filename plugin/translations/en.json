@@ -7,8 +7,6 @@
   "settings.cursor_size.description": "Cursor size applied via gsettings for GTK apps.",
   "settings.enable_notifications.label": "Enable notifications",
   "settings.enable_notifications.description": "Show a notification when the cursor theme changes.",
-  "settings.enforce_dark_mode.label": "Enforce dark mode",
-  "settings.enforce_dark_mode.description": "Set the theme back to dark on every wallpaper switch.",
   "settings.poll_interval_ms.label": "Poll interval (ms)",
   "settings.poll_interval_ms.description": "How often the service checks wallpapers for changes.",
   "settings.wallpaper_root.label": "Wallpaper root",

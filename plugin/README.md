@@ -29,7 +29,6 @@ so steady state doesn't flap.
 | `folder_map` | string_map | see `plugin.toml` | Wallpaper path substring → cursor theme. |
 | `cursor_size` | int | `24` | Applied via `gsettings` (8–96). |
 | `enable_notifications` | bool | `true` | `noctalia.notify` on each switch. |
-| `enforce_dark_mode` | bool | `true` | Set the theme back to dark on every wallpaper switch. |
 | `poll_interval_ms` | int (advanced) | `2000` | Poll cadence (500–10000). |
 
 Requires the cursor themes in `~/.local/share/icons/` and Mango
