@@ -1,6 +1,6 @@
 --!nonstrict
--- Minimal board: pick a wallpaper, assign its folder a cursor.
--- Two jobs only: Set wallpaper + Save cursor mapping. Save rewrites just the
+-- Minimal board: assign a wallpaper folder a cursor theme.
+-- One job only: Save cursor mapping. Save rewrites just the
 -- folder_map lines of the settings file (with backup) and reloads config so
 -- the service adopts the new rule. Plain Luau subset parseable by stock
 -- lua 5.4. plugin_api 25 only.
@@ -9,16 +9,15 @@ local is_open = false
 
 -- Pick state (lua 1-based positions into the current option lists).
 local pick_folder_idx = 1
-local image_idx = 1
 local pick_cursor_idx = 1
--- Last render's actions, consumed by the button handlers.
-local last_apply = nil
-local last_connector = nil
+-- Last render's mapping, consumed by the save handler.
 local last_pick = nil
 
 local MAP_HEADER = '[plugin_settings."walt/wallpaper-cursor".folder_map]'
 local BACKUP_SUFFIX = ".bak-wallpaper-cursor"
-local IMAGE_EXTS = { png = true, jpg = true, jpeg = true, webp = true, avif = true, bmp = true }
+-- Upper bound for folder/cursor names: rejects oversized input before it
+-- reaches the settings file or an external command.
+local MAX_NAME_LEN = 128
 
 local function expand(path)
   if type(path) ~= "string" or path == "" then
@@ -85,34 +84,6 @@ local function list_cursors(root)
   return themes
 end
 
-local function list_images(dir)
-  if type(dir) ~= "string" or dir == "" then
-    return {}
-  end
-  local ok, names = pcall(function()
-    return noctalia.listDir(dir)
-  end)
-  if not ok or type(names) ~= "table" then
-    return {}
-  end
-  local imgs = {}
-  for _, n in ipairs(names) do
-    if type(n) == "string" and n ~= "" then
-      local ext = string.match(n, "%.([^./]+)$")
-      if ext ~= nil and IMAGE_EXTS[string.lower(ext)] then
-        local ok2, info = pcall(function()
-          return noctalia.fileInfo(dir .. "/" .. n)
-        end)
-        if not ok2 or type(info) ~= "table" or not info.isDir then
-          table.insert(imgs, n)
-        end
-      end
-    end
-  end
-  table.sort(imgs)
-  return imgs
-end
-
 local function short_root(path)
   if type(path) ~= "string" or path == "" then
     return ""
@@ -147,6 +118,16 @@ local function can_open()
   return ok and has == true
 end
 
+local function is_dir(path)
+  if type(path) ~= "string" or path == "" then
+    return false
+  end
+  local ok, info = pcall(function()
+    return noctalia.fileInfo(path)
+  end)
+  return ok and type(info) == "table" and info.isDir == true
+end
+
 local function open_path(path)
   if type(path) ~= "string" or path == "" then
     return
@@ -154,6 +135,12 @@ local function open_path(path)
   if not can_open() then
     return
   end
+  -- Only open directories: a misconfigured root pointing at a file (or a
+  -- path that changed on disk) must not be handed to xdg-open.
+  if not is_dir(path) then
+    return
+  end
+  -- Array form: no shell, so spaces/quotes in the path cannot inject flags.
   noctalia.runAsync({ "xdg-open", path })
 end
 
@@ -188,38 +175,27 @@ local function clamp_idx(i, n)
   return math.floor(i)
 end
 
--- Focused output first, then the service's first known output, then live.
-local function target_connector()
-  local ok, out = pcall(function()
-    return noctalia.focusedOutputName()
-  end)
-  if ok and type(out) == "string" and out ~= "" then
-    return out
+-- Names come from on-disk directory entries: reject control characters
+-- (CR/LF/TAB split TOML rows or log lines) and bound the length before
+-- anything reaches the settings file, a notification, or a command.
+local function valid_name(s)
+  if type(s) ~= "string" or s == "" or #s > MAX_NAME_LEN then
+    return false
   end
-  local okb, board = pcall(function()
-    if noctalia.state ~= nil and noctalia.state.get ~= nil then
-      return noctalia.state.get("wallpaper-cursor.board")
-    end
-    return nil
-  end)
-  if okb and type(board) == "table" and type(board.outputs) == "table" then
-    for _, o in ipairs(board.outputs) do
-      if type(o) == "table" and type(o.name) == "string" and o.name ~= "" then
-        return o.name
-      end
-    end
+  return string.find(s, "[%c]") == nil
+end
+
+-- Safe display: control characters become "?" so a hostile directory name
+-- cannot break the panel layout; overlong names are truncated.
+local function display_name(s, fallback)
+  if type(s) ~= "string" or s == "" then
+    return fallback
   end
-  local oko, outs = pcall(function()
-    return noctalia.outputs()
-  end)
-  if oko and type(outs) == "table" then
-    for _, o in ipairs(outs) do
-      if type(o) == "table" and type(o.name) == "string" and o.name ~= "" then
-        return o.name
-      end
-    end
+  local clean = string.gsub(s, "[%c]", "?")
+  if #clean > MAX_NAME_LEN then
+    clean = string.sub(clean, 1, MAX_NAME_LEN) .. "…"
   end
-  return nil
+  return clean
 end
 
 local function toml_escape(s)
@@ -333,11 +309,11 @@ end
 -- Write one folder -> cursor row into the settings file's folder_map table.
 -- Surgical: every other byte stays identical. Returns true, or false + err.
 local function save_mapping(folder, cursor)
-  if type(folder) ~= "string" or folder == "" then
-    return false, "no folder selected"
+  if not valid_name(folder) then
+    return false, "invalid folder name"
   end
-  if type(cursor) ~= "string" or cursor == "" then
-    return false, "no cursor selected"
+  if not valid_name(cursor) then
+    return false, "invalid cursor name"
   end
   local path, content = find_settings()
   if path == nil or content == nil then
@@ -403,48 +379,67 @@ local function save_mapping(folder, cursor)
   return true
 end
 
-local function render()
-  local unknown = noctalia.tr("panel.unknown")
+-- Fresh snapshot of on-disk options + current picks. The save handler uses
+-- this instead of the last render's cache so a board watcher rerender
+-- between select and click cannot make it save the wrong mapping.
+local function snapshot()
   local wall_root = get_root("wallpaper_root", "~/Pictures/Wallpapers")
   local icon_root = get_root("icon_root", "~/.local/share/icons")
-  local open_tip = noctalia.tr("panel.open_folder")
-
   local folders = list_subdirs(wall_root)
   local cursors = list_cursors(icon_root)
-  pick_folder_idx = clamp_idx(pick_folder_idx, math.max(#folders, 1))
-  pick_cursor_idx = clamp_idx(pick_cursor_idx, math.max(#cursors, 1))
+  local f_idx = clamp_idx(pick_folder_idx, math.max(#folders, 1))
+  local c_idx = clamp_idx(pick_cursor_idx, math.max(#cursors, 1))
+  return {
+    wall_root = wall_root,
+    icon_root = icon_root,
+    folders = folders,
+    cursors = cursors,
+    folder_idx = f_idx,
+    cursor_idx = c_idx,
+    pick_folder = folders[f_idx],
+    pick_cursor = cursors[c_idx],
+  }
+end
 
-  local pick_folder = folders[pick_folder_idx]
-  local image_dir = nil
-  if type(pick_folder) == "string" and type(wall_root) == "string" and wall_root ~= "" then
-    image_dir = wall_root .. "/" .. pick_folder
-  end
-  local images = list_images(image_dir)
-  image_idx = clamp_idx(image_idx, math.max(#images, 1))
+local function render()
+  local unknown = noctalia.tr("panel.unknown")
+  local open_tip = noctalia.tr("panel.open_folder")
+  local snap = snapshot()
 
-  last_connector = target_connector()
-  last_apply = nil
-  if image_dir ~= nil and images[image_idx] ~= nil then
-    last_apply = { dir = image_dir, image = images[image_idx] }
-  end
+  local wall_root = snap.wall_root
+  local icon_root = snap.icon_root
+  local folders = snap.folders
+  local cursors = snap.cursors
+  -- Sync clamped positions back so stale indices cannot linger after
+  -- folders/themes appear or disappear while the panel is open.
+  pick_folder_idx = snap.folder_idx
+  pick_cursor_idx = snap.cursor_idx
+
+  local pick_folder = snap.pick_folder
+  local pick_cursor = snap.pick_cursor
+
   last_pick = nil
-  local pick_cursor = cursors[pick_cursor_idx]
-  if type(pick_folder) == "string" and type(pick_cursor) == "string" then
+  if valid_name(pick_folder) and valid_name(pick_cursor) then
     last_pick = { folder = pick_folder, cursor = pick_cursor }
   end
-  local pf = pick_folder or unknown
-  local pc = pick_cursor or unknown
+  local pf = display_name(pick_folder, unknown)
+  local pc = display_name(pick_cursor, unknown)
 
-  local shortcut_cells = {}
+  -- Footer: one row per root (two narrow rows fit; one wide row overflows).
+  local footer_rows = {}
   local wb = folder_button(wall_root, open_tip)
   if wb ~= nil then
-    table.insert(shortcut_cells, wb)
-    table.insert(shortcut_cells, ui.label({ text = short_root(wall_root) }))
+    table.insert(footer_rows, ui.row({ gap = 8, align = "center" }, {
+      wb,
+      ui.label({ text = short_root(wall_root), fontSize = 12 }),
+    }))
   end
   local ib = folder_button(icon_root, open_tip)
   if ib ~= nil then
-    table.insert(shortcut_cells, ib)
-    table.insert(shortcut_cells, ui.label({ text = short_root(icon_root) }))
+    table.insert(footer_rows, ui.row({ gap = 8, align = "center" }, {
+      ib,
+      ui.label({ text = short_root(icon_root), fontSize = 12 }),
+    }))
   end
 
   local body = {
@@ -461,18 +456,6 @@ local function render()
   else
     table.insert(body, ui.label({ text = unknown }))
   end
-  table.insert(body, ui.label({ text = noctalia.tr("panel.pick_image"), fontWeight = "bold" }))
-  if #images > 0 then
-    table.insert(body, ui.select({ options = images, selectedIndex = image_idx - 1, onChange = "onPickImage" }))
-  else
-    table.insert(body, ui.label({ text = noctalia.tr("panel.no_images") }))
-  end
-  table.insert(body, ui.button({
-    text = noctalia.tr("panel.apply"),
-    variant = "default",
-    enabled = last_apply ~= nil and last_connector ~= nil,
-    onClick = "onApplyWallpaper",
-  }))
   table.insert(body, ui.separator({ color = "outline", thickness = 1, spacing = 4 }))
   table.insert(body, ui.label({ text = noctalia.tr("panel.pick_cursor"), fontWeight = "bold" }))
   if #cursors > 0 then
@@ -480,19 +463,19 @@ local function render()
   else
     table.insert(body, ui.label({ text = unknown }))
   end
-  table.insert(body, ui.label({ text = pf .. " => " .. pc }))
+  table.insert(body, ui.label({ text = pf .. " => " .. pc, fontSize = 13 }))
   table.insert(body, ui.button({
     text = noctalia.tr("panel.save"),
     variant = "primary",
     enabled = last_pick ~= nil,
     onClick = "onSaveMapping",
   }))
-  if #shortcut_cells > 0 then
+  if #footer_rows > 0 then
     table.insert(body, ui.separator({ color = "outline", thickness = 1, spacing = 4 }))
-    table.insert(body, ui.row({ gap = 8, align = "center" }, shortcut_cells))
+    table.insert(body, ui.column({ gap = 6 }, footer_rows))
   end
 
-  panel.render(ui.column({ gap = 12 }, body))
+  panel.render(ui.column({ gap = 10 }, body))
 end
 
 function onOpen(_context)
@@ -505,10 +488,15 @@ function onClose()
 end
 
 -- ui.select reports the chosen position as a 0-based index string.
+-- Re-render immediately so preview and button state follow
+-- the new pick without closing/reopening the panel.
 function onPickFolder(value)
   local i = tonumber(value)
   if i ~= nil then
     pick_folder_idx = i + 1
+    if is_open then
+      render()
+    end
   end
 end
 
@@ -516,32 +504,21 @@ function onPickCursor(value)
   local i = tonumber(value)
   if i ~= nil then
     pick_cursor_idx = i + 1
-  end
-end
-
-function onPickImage(value)
-  local i = tonumber(value)
-  if i ~= nil then
-    image_idx = i + 1
-  end
-end
-
-function onApplyWallpaper()
-  if type(last_apply) ~= "table" or last_connector == nil then
-    return
-  end
-  local full = last_apply.dir .. "/" .. last_apply.image
-  local ok, err = pcall(function()
-    return noctalia.setWallpaper(last_connector, full)
-  end)
-  if not ok then
-    noctalia.log("wallpaper-cursor: setWallpaper failed: " .. tostring(err))
-  else
-    noctalia.log("wallpaper-cursor: wallpaper set [" .. tostring(last_connector) .. "] " .. full)
+    if is_open then
+      render()
+    end
   end
 end
 
 function onSaveMapping()
+  -- Recompute from disk + current indices for the same staleness reason.
+  local snap = snapshot()
+  pick_folder_idx = snap.folder_idx
+  pick_cursor_idx = snap.cursor_idx
+  last_pick = nil
+  if valid_name(snap.pick_folder) and valid_name(snap.pick_cursor) then
+    last_pick = { folder = snap.pick_folder, cursor = snap.pick_cursor }
+  end
   if type(last_pick) ~= "table" then
     return
   end

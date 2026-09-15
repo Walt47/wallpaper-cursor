@@ -1,4 +1,4 @@
--- Panel tests for wallpaper-cursor: stub noctalia host, drive the two-job board.
+-- Panel tests for wallpaper-cursor: stub noctalia host, drive the single-job board.
 -- Run:  lua plugin/tests/panel_test.lua   (from the repo root)
 -- Needs only stock lua; no running Noctalia required. Exits 0 + ALL PASS
 -- when green, 1 + "<n> FAILURES" otherwise.
@@ -20,40 +20,43 @@ local settings_seed = table.concat({
   'mode = "dark"',
 }, "\n")
 
+local EVIL_FOLDER = "Evil\nName"
+local EVIL_CURSOR = "Bad\nCursor"
+
 local config = {
   wallpaper_root = "/pics/Wallpapers",
   icon_root = "/icons",
 }
-local live_outputs = { { name = "eDP-1" } }
-local focused_name = "eDP-1"
 local has_xdg = true
 local fail_writes = false
 
 local files = { [SETTINGS] = settings_seed }
 local fs_children = {
-  ["/pics/Wallpapers"] = { "Umineko", "Others", "Land of the Lustrous", "loose.txt", 'Weird"Name' },
-  ["/pics/Wallpapers/Umineko"] = { "Beatrice.png", "Erika.JPG", "notes.txt", "thumbs" },
+  ["/pics/Wallpapers"] = { "Umineko", "Others", "Land of the Lustrous", "loose.txt", 'Weird"Name', EVIL_FOLDER },
+  ["/pics/Wallpapers/Umineko"] = { "Beatrice.png", "notes.txt", "thumbs" },
   ["/pics/Wallpapers/Umineko/thumbs"] = {},
   ["/pics/Wallpapers/Others"] = {},
   ["/pics/Wallpapers/Land of the Lustrous"] = { "Phos.png" },
   ["/pics/Wallpapers/Weird\"Name"] = {},
-  ["/icons"] = { "Beatrice", "Phosphophyllite", "hicolor", "notes.txt" },
+  ["/pics/Wallpapers/" .. EVIL_FOLDER] = {},
+  ["/icons"] = { "Beatrice", "Phosphophyllite", "hicolor", "notes.txt", EVIL_CURSOR },
   ["/icons/Beatrice"] = {},
   ["/icons/Beatrice/cursors"] = {},
   ["/icons/Phosphophyllite"] = {},
   ["/icons/Phosphophyllite/cursors"] = {},
   ["/icons/hicolor"] = {},
+  ["/icons/" .. EVIL_CURSOR] = {},
+  ["/icons/" .. EVIL_CURSOR .. "/cursors"] = {},
 }
 local fs_files = {
   ["/pics/Wallpapers/loose.txt"] = true,
   ["/pics/Wallpapers/Umineko/Beatrice.png"] = true,
-  ["/pics/Wallpapers/Umineko/Erika.JPG"] = true,
   ["/pics/Wallpapers/Umineko/notes.txt"] = true,
   ["/pics/Wallpapers/Land of the Lustrous/Phos.png"] = true,
   ["/icons/notes.txt"] = true,
 }
 
-local calls = { run = {}, notes = {}, logs = {}, applied = {}, writes = {} }
+local calls = { run = {}, notes = {}, logs = {}, writes = {} }
 local watchers = {}
 
 local tr_templates = {
@@ -62,9 +65,6 @@ local tr_templates = {
   ["panel.pick_title"] = "Pick",
   ["panel.pick_folder"] = "Folder",
   ["panel.pick_cursor"] = "Cursor",
-  ["panel.pick_image"] = "Image",
-  ["panel.apply"] = "Apply",
-  ["panel.no_images"] = "No images here",
   ["panel.open_folder"] = "Open",
   ["panel.save"] = "Save",
   ["panel.saved"] = "Saved!",
@@ -99,12 +99,10 @@ noctalia = {
     table.insert(calls.writes, p)
     return true
   end,
-  focusedOutputName = function() return focused_name end,
-  outputs = function() return live_outputs end,
-  wallpaperPath = function(conn) return nil end,
-  setWallpaper = function(conn, path)
-    table.insert(calls.applied, { conn = conn, path = path })
-    return true
+  focusedOutputName = function() return nil end,
+  outputs = function() return {} end,
+  setWallpaper = function()
+    error("image job removed: setWallpaper must not be called")
   end,
   runAsync = function(argv, cb)
     table.insert(calls.run, argv)
@@ -249,7 +247,7 @@ local function fire_watch(key, value)
   end
 end
 
--- Seed board state: cursor + per-output wallpapers.
+-- Seed board state for the watcher.
 noctalia.state._s["wallpaper-cursor.board"] = {
   cursor = "Beatrice",
   outputs = {
@@ -258,24 +256,22 @@ noctalia.state._s["wallpaper-cursor.board"] = {
 }
 noctalia.state._s["wallpaper-cursor.cursor"] = "Beatrice"
 
--- Pick helper: choose an option by name (0-based contract), re-render.
+-- Pick helper: choose an option by name (0-based contract). Handlers
+-- re-render immediately while open, so no manual reopen is needed.
 local function pick(handler, name)
   local sel = find_select(latest(), handler)
   if sel == nil or type(sel.props.options) ~= "table" then return false end
   for i, v in ipairs(sel.props.options) do
     if v == name then
       if handler == "onPickFolder" then onPickFolder(tostring(i - 1))
-      elseif handler == "onPickCursor" then onPickCursor(tostring(i - 1))
-      elseif handler == "onPickImage" then onPickImage(tostring(i - 1)) end
-      panel.renders = {}
-      onOpen(nil)
+      elseif handler == "onPickCursor" then onPickCursor(tostring(i - 1)) end
       return true
     end
   end
   return false
 end
 
--- 1: two-job layout only — no trace of the old sections
+-- 1: single-job layout — folder + cursor + save only, no image job
 panel.renders = {}
 onOpen(nil)
 check("open-renders", #panel.renders >= 1, #panel.renders)
@@ -284,10 +280,12 @@ check("pick-uminekubeatrice0", pick("onPickFolder", "Umineko") and pick("onPickC
 local t1 = latest()
 local texts1 = collect_texts(t1)
 check("folder-select", find_select(t1, "onPickFolder") ~= nil)
-check("image-select", find_select(t1, "onPickImage") ~= nil)
 check("cursor-select", find_select(t1, "onPickCursor") ~= nil)
-check("apply-button", find_button(t1, "onApplyWallpaper") ~= nil)
+check("no-image-select", find_select(t1, "onPickImage") == nil)
+check("no-apply-button", find_button(t1, "onApplyWallpaper") == nil)
 check("save-button", find_button(t1, "onSaveMapping") ~= nil)
+check("no-image-handler", type(onPickImage) == "nil", type(onPickImage))
+check("no-apply-handler", type(onApplyWallpaper) == "nil", type(onApplyWallpaper))
 check("shortcut-buttons", #find_folder_buttons(t1) == 2, #find_folder_buttons(t1))
 check("separators", (function()
   local n = 0
@@ -312,47 +310,81 @@ check("title-glyph-photo", (function()
   return found
 end)())
 
--- 2: discovery — sorted folders, cursor marker filter, image filter
+-- 2: discovery — sorted folders, cursor themes with cursors/ marker only
 local foldersel = find_select(latest(), "onPickFolder")
 local fopts = (foldersel ~= nil and foldersel.props.options) or {}
-check("folder-options", #fopts == 4 and fopts[1] == "Land of the Lustrous" and fopts[2] == "Others" and fopts[3] == "Umineko" and fopts[4] == 'Weird"Name')
+check("folder-options", #fopts == 5
+  and fopts[1] == "Evil\nName"
+  and fopts[2] == "Land of the Lustrous"
+  and fopts[3] == "Others"
+  and fopts[4] == "Umineko"
+  and fopts[5] == 'Weird"Name',
+  table.concat(fopts, "|"))
 local cursel = find_select(latest(), "onPickCursor")
 local copts = (cursel ~= nil and cursel.props.options) or {}
-check("cursor-options", #copts == 2 and copts[1] == "Beatrice" and copts[2] == "Phosphophyllite")
+check("cursor-options", #copts == 3
+  and copts[1] == "Bad\nCursor"
+  and copts[2] == "Beatrice"
+  and copts[3] == "Phosphophyllite",
+  table.concat(copts, "|"))
 check("roots-line", texts_contain(collect_texts(latest()), "/pics/Wallpapers"))
 
--- 3: picks drive the preview pair
+-- 3: picks drive the preview pair, immediately, no reopen
+local r_pre = #panel.renders
 check("pick-uminekophos", pick("onPickFolder", "Umineko") and pick("onPickCursor", "Phosphophyllite"))
 check("preview-pair", texts_contain(collect_texts(latest()), "Umineko => Phosphophyllite"))
+check("immediate-rerender", #panel.renders >= r_pre + 2, #panel.renders - r_pre)
+local r0 = #panel.renders
+check("immediate-folder-rerender", pick("onPickFolder", "Umineko") and #panel.renders == r0 + 1, #panel.renders - r0)
+check("immediate-preview", texts_contain(collect_texts(latest()), "Umineko =>"))
+local r1 = #panel.renders
+check("immediate-cursor-rerender", pick("onPickCursor", "Phosphophyllite") and #panel.renders == r1 + 1)
+check("immediate-cursor-preview", texts_contain(collect_texts(latest()), "Umineko => Phosphophyllite"))
 
--- 4: image options exclude dirs and non-images; apply targets focused output
-local imsel = find_select(latest(), "onPickImage")
-local imopts = (imsel ~= nil and imsel.props.options) or {}
-check("image-options", #imopts == 2 and imopts[1] == "Beatrice.png" and imopts[2] == "Erika.JPG")
-calls.applied = {}
-onApplyWallpaper()
-check("apply-focused", #calls.applied == 1 and calls.applied[1].conn == "eDP-1" and calls.applied[1].path == "/pics/Wallpapers/Umineko/Beatrice.png", calls.applied[1] and (tostring(calls.applied[1].conn) .. "|" .. tostring(calls.applied[1].path)))
-check("pick-second-image", pick("onPickImage", "Erika.JPG"))
-calls.applied = {}
-onApplyWallpaper()
-check("apply-second-image", #calls.applied == 1 and calls.applied[1].path == "/pics/Wallpapers/Umineko/Erika.JPG")
-focused_name = nil
-calls.applied = {}
-onApplyWallpaper()
-check("apply-fallback-output", #calls.applied == 1 and calls.applied[1].conn == "eDP-1")
-focused_name = "eDP-1"
+-- footer is two stacked rows, not one wide row (overflow regression)
+check("footer-vertical", (function()
+  local found_col = false
+  walk(latest(), function(n)
+    if n.type == "column" and type(n.children) == "table" and #n.children == 2 then
+      local rows_ok = true
+      for _, c in ipairs(n.children) do
+        if c.type ~= "row" then rows_ok = false end
+      end
+      if rows_ok then
+        local btns = 0
+        walk(n, function(m)
+          if m.type == "button" and type(m.props) == "table" and m.props.glyph == "photo" then
+            btns = btns + 1
+          end
+        end)
+        if btns == 2 then found_col = true end
+      end
+    end
+  end)
+  return found_col
+end)())
+check("footer-no-wide-row", (function()
+  local wide = false
+  walk(latest(), function(n)
+    if n.type == "row" and type(n.children) == "table" and #n.children == 4 then
+      local btns = 0
+      for _, c in ipairs(n.children) do
+        if c.type == "button" and type(c.props) == "table" and c.props.glyph == "photo" then
+          btns = btns + 1
+        end
+      end
+      if btns == 2 then wide = true end
+    end
+  end)
+  return not wide
+end)())
+-- invalid dropdown payload is ignored, panel stays usable
+local r3 = #panel.renders
+onPickFolder("not-a-number")
+check("invalid-pick-no-render", #panel.renders == r3, #panel.renders - r3)
+check("invalid-pick-still-renders", pcall(function() return latest() ~= nil end))
 
--- 5: empty folder disables apply; save is a no-op without picks
-check("pick-empty-others", pick("onPickFolder", "Others"))
-local t5 = latest()
-check("image-empty-label", texts_contain(collect_texts(t5), "No images here"))
-local apply5 = find_button(t5, "onApplyWallpaper")
-check("apply-disabled-empty", apply5 ~= nil and apply5.props.enabled == false)
-calls.applied = {}
-onApplyWallpaper()
-check("apply-noop-empty", #calls.applied == 0, #calls.applied)
-
--- 6: save updates an existing row, byte-identical otherwise
+-- 4: save updates an existing row, byte-identical otherwise
 check("pick-uminekophos6", pick("onPickFolder", "Umineko") and pick("onPickCursor", "Phosphophyllite"))
 calls.run = {}
 calls.notes = {}
@@ -371,7 +403,7 @@ end
 check("save-reloads", reloaded)
 check("save-notify", #calls.notes == 1 and calls.notes[1].title == "Saved!" and calls.notes[1].body == "Umineko → Phosphophyllite", calls.notes[1] and (tostring(calls.notes[1].title) .. "|" .. tostring(calls.notes[1].body)))
 
--- 7: save adds a spaced folder as a quoted row (folder_map currently Umineko-only again)
+-- 5: save adds a spaced folder as a quoted row (folder_map currently Umineko-only again)
 files[SETTINGS] = before
 files[SETTINGS .. ".bak-wallpaper-cursor"] = nil
 check("pick-landphos", pick("onPickFolder", "Land of the Lustrous") and pick("onPickCursor", "Phosphophyllite"))
@@ -383,14 +415,42 @@ check("save-adds-quoted", string.find(added, '"Land of the Lustrous" = "Phosphop
 check("save-keeps-old", string.find(added, 'Umineko = "Beatrice"', 1, true) ~= nil)
 check("save-keeps-tail", string.find(added, '[theme]', 1, true) ~= nil and string.find(added, 'mode = "dark"', 1, true) ~= nil)
 
--- 8: save escapes quotes in folder names
+-- 6: save escapes quotes in folder names
 files[SETTINGS] = before
 files[SETTINGS .. ".bak-wallpaper-cursor"] = nil
 check("pick-weird", pick("onPickFolder", 'Weird"Name') and pick("onPickCursor", "Beatrice"))
 onSaveMapping()
 check("save-escapes", string.find(files[SETTINGS], '"Weird\\"Name" = "Beatrice"', 1, true) ~= nil, files[SETTINGS])
 
--- 9: missing map section is appended; missing file aborts loudly
+-- 7: control-character names are rejected: save disabled, no write, silent no-op
+-- (same contract as the empty-list case: the disabled button means the
+-- handler must never produce a write, a reload, or a notification).
+check("pick-evil-folder", pick("onPickFolder", EVIL_FOLDER) and pick("onPickCursor", "Beatrice"))
+local t_evil_f = latest()
+local save_evil_f = find_button(t_evil_f, "onSaveMapping")
+check("save-disabled-evil-folder", save_evil_f ~= nil and save_evil_f.props.enabled == false)
+files[SETTINGS] = before
+files[SETTINGS .. ".bak-wallpaper-cursor"] = nil
+calls.run = {}
+calls.notes = {}
+onSaveMapping()
+check("save-evil-folder-untouched", files[SETTINGS] == before, files[SETTINGS])
+check("save-evil-folder-silent", #calls.notes == 0 and #calls.run == 0)
+check("pick-uminek-evil-cursor", pick("onPickFolder", "Umineko") and pick("onPickCursor", EVIL_CURSOR))
+local t_evil_c = latest()
+local save_evil_c = find_button(t_evil_c, "onSaveMapping")
+check("save-disabled-evil-cursor", save_evil_c ~= nil and save_evil_c.props.enabled == false)
+files[SETTINGS] = before
+files[SETTINGS .. ".bak-wallpaper-cursor"] = nil
+calls.run = {}
+calls.notes = {}
+onSaveMapping()
+check("save-evil-cursor-untouched", files[SETTINGS] == before)
+check("save-evil-cursor-silent", #calls.notes == 0 and #calls.run == 0)
+-- back to a valid pair for the remaining tests
+check("pick-valid-again", pick("onPickFolder", "Umineko") and pick("onPickCursor", "Beatrice"))
+
+-- 8: missing map section is appended; missing file aborts loudly
 files[SETTINGS] = table.concat({
   '[plugin_settings."walt/wallpaper-cursor"]',
   "cursor_size = 24",
@@ -423,7 +483,7 @@ end
 check("save-missing-file-no-reload", not reloaded2)
 files[SETTINGS] = before
 
--- 10: write failure keeps the original and reports
+-- 9: write failure keeps the original and reports
 fail_writes = true
 check("pick-uminekobeatrice3", pick("onPickFolder", "Umineko") and pick("onPickCursor", "Beatrice"))
 calls.notes = {}
@@ -432,7 +492,7 @@ check("save-fail-keeps-original", files[SETTINGS] == before, files[SETTINGS])
 check("save-fail-notify", #calls.notes == 1 and calls.notes[1].title == "Save failed!")
 fail_writes = false
 
--- 11: no folders at all — save button disabled, save is a silent no-op
+-- 10: no folders at all — save button disabled, save is a silent no-op
 config.wallpaper_root = nil
 config.icon_root = nil
 panel.renders = {}
@@ -450,7 +510,7 @@ for _ in pairs(files) do writes_after = writes_after + 1 end
 check("save-noop-empty", writes_after == writes_before and #calls.run == 0 and #calls.notes == 0)
 onClose()
 
--- 12: folder shortcut buttons and watch behavior
+-- 11: folder shortcut buttons, dir-only open guard, and watch behavior
 config.wallpaper_root = "/pics/Wallpapers"
 config.icon_root = "/icons"
 panel.renders = {}
@@ -466,6 +526,20 @@ for _, argv in ipairs(calls.run) do
 end
 check("shortcut-wallpapers", opened["/pics/Wallpapers"] == true)
 check("shortcut-icons", opened["/icons"] == true)
+-- a root pointing at a file must not be handed to xdg-open
+config.wallpaper_root = "/pics/Wallpapers/loose.txt"
+panel.renders = {}
+onOpen(nil)
+calls.run = {}
+for _, b in ipairs(find_folder_buttons(latest())) do
+  b.props.onClick()
+end
+local opened_file = false
+for _, argv in ipairs(calls.run) do
+  if argv[1] == "xdg-open" and argv[2] == "/pics/Wallpapers/loose.txt" then opened_file = true end
+end
+check("shortcut-file-not-opened", not opened_file)
+config.wallpaper_root = "/pics/Wallpapers"
 has_xdg = false
 panel.renders = {}
 onOpen(nil)
@@ -473,11 +547,6 @@ check("no-xdg-no-buttons", #find_folder_buttons(latest()) == 0)
 has_xdg = true
 check("watch-registered", watchers["wallpaper-cursor.board"] ~= nil and #watchers["wallpaper-cursor.board"] >= 1)
 local n0 = #panel.renders
-local function fire_watch(key, value)
-  for _, fn in ipairs(watchers[key] or {}) do
-    fn(value)
-  end
-end
 fire_watch("wallpaper-cursor.board", { cursor = "X", outputs = {} })
 check("watch-rerenders-while-open", #panel.renders == n0 + 1, #panel.renders - n0)
 onClose()
@@ -485,11 +554,23 @@ local n1 = #panel.renders
 fire_watch("wallpaper-cursor.board", { cursor = "Y", outputs = {} })
 check("watch-silent-after-close", #panel.renders == n1, #panel.renders - n1)
 
+-- 12: save uses a fresh snapshot: watcher rerender between pick and click is safe
+panel.renders = {}
+onOpen(nil)
+check("fresh-pick-phos", pick("onPickFolder", "Umineko") and pick("onPickCursor", "Phosphophyllite"))
+fire_watch("wallpaper-cursor.board", { cursor = "Y", outputs = {} })
+files[SETTINGS] = settings_seed
+files[SETTINGS .. ".bak-wallpaper-cursor"] = nil
+calls.run = {}
+calls.notes = {}
+onSaveMapping()
+check("fresh-save-after-watch", string.find(files[SETTINGS] or "", 'Umineko = "Phosphophyllite"', 1, true) ~= nil, files[SETTINGS])
+onClose()
+
 -- 13: never crashes on nil/empty configs
 config.wallpaper_root = nil
 config.icon_root = nil
 noctalia.state._s["wallpaper-cursor.board"] = nil
-live_outputs = nil
 local ok = pcall(function() onOpen(nil) end)
 check("nil-config-no-crash", ok)
 local ok2 = pcall(function() onClose() end)

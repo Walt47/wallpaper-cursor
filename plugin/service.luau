@@ -11,6 +11,7 @@ local MANGO_CONF = (noctalia.getenv("HOME") or os.getenv("HOME") or "") .. "/.co
 
 local DEFAULT_POLL_MS = 2000
 local DEFAULT_SIZE = 24
+local MAX_CURSOR_LEN = 128
 
 local prev_paths = {}
 local last_winner_name = nil
@@ -20,11 +21,25 @@ local applied_interval = nil
 noctalia.setUpdateInterval(DEFAULT_POLL_MS)
 applied_interval = DEFAULT_POLL_MS
 
+-- Cursor names end up in Mango's config (one `cursor_theme=<value>` line),
+-- in a single comma-joined `mmsg setoption` argument, and in gsettings argv.
+-- An allowlist blocks newline/`,`/`=` injection before any sink is reached.
+-- Typical theme names ("Adwaita", "Beatrice", "Phosphophyllite") all match.
+local function valid_cursor(s)
+  if type(s) ~= "string" or s == "" or #s > MAX_CURSOR_LEN then
+    return false
+  end
+  return string.match(s, "^[A-Za-z0-9 _%-%+%.@]+$") ~= nil
+end
+
 local function resolve_cursor(path, folder_map, default_cursor)
-  if path == nil then return default_cursor end
+  if type(path) ~= "string" or path == "" then return default_cursor end
+  if type(folder_map) ~= "table" then return default_cursor end
   for folder, cursor in pairs(folder_map) do
-    if string.find(path, folder, 1, true) then
-      return cursor
+    if type(folder) == "string" and folder ~= "" and valid_cursor(cursor) then
+      if string.find(path, folder, 1, true) then
+        return cursor
+      end
     end
   end
   return default_cursor
@@ -38,6 +53,9 @@ local function current_cursor()
 end
 
 local function write_cursor(cursor)
+  if not valid_cursor(cursor) then
+    return false, "invalid cursor name"
+  end
   local f = noctalia.readFile(MANGO_CONF)
   if f == nil then
     return false, "mango conf missing: " .. MANGO_CONF
@@ -63,6 +81,9 @@ local function write_cursor(cursor)
 end
 
 local function live_apply(cursor, size)
+  if not valid_cursor(cursor) then
+    return
+  end
   -- Primary: setoption changes appearance without reload (no flicker).
   -- Fallback: script-triggered hot-reload (still no keypress).
   if noctalia.commandExists("mmsg") then
@@ -102,7 +123,10 @@ local function enforce_dark(enabled)
 end
 
 local function apply_cursor(cursor, wallpaper_path, output_name, size, notify_enabled, dark_enabled)
-  if cursor == nil then return end
+  if not valid_cursor(cursor) then
+    noctalia.log("wallpaper-cursor: refusing invalid cursor name, not writing Mango config.")
+    return
+  end
   local previous = current_cursor()
   if previous == cursor then return end
   local ok, err = write_cursor(cursor)
@@ -137,8 +161,10 @@ local function config_number(key, fallback, min_v, max_v)
 end
 
 function update()
-  local folder_map = noctalia.getConfig("folder_map") or {}
-  local default_cursor = noctalia.getConfig("default_cursor") or "Adwaita"
+  local folder_map = noctalia.getConfig("folder_map")
+  if type(folder_map) ~= "table" then folder_map = {} end
+  local default_cursor = noctalia.getConfig("default_cursor")
+  if not valid_cursor(default_cursor) then default_cursor = "Adwaita" end
   local size = config_number("cursor_size", DEFAULT_SIZE, 8, 96)
   local notify_enabled = noctalia.getConfig("enable_notifications")
   if notify_enabled == nil then notify_enabled = true end
@@ -198,6 +224,11 @@ function update()
 
   local path = current_paths[winner.name]
   local cursor = resolve_cursor(path, folder_map, default_cursor)
+  if not valid_cursor(cursor) then
+    noctalia.log("wallpaper-cursor: resolved cursor invalid, keeping current theme.")
+    prev_paths = current_paths
+    return
+  end
   apply_cursor(cursor, path, winner.name, size, notify_enabled, dark_enabled)
   noctalia.state.set("wallpaper-cursor.cursor", cursor)
 

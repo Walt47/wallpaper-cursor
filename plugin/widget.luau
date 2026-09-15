@@ -10,7 +10,7 @@ noctalia.setUpdateInterval(2000)
 local PANEL_ID = "walt/wallpaper-cursor:board"
 local CURSOR_KEY = "wallpaper-cursor.cursor"
 local BOARD_KEY = "wallpaper-cursor.board"
-local GLYPH = "cursor-text"
+local GLYPH = "pointer-filled"
 local PLACEHOLDER = "…"
 
 local function current_cursor()

@@ -91,7 +91,7 @@ check("interval-2000", #calls.intervals >= 1 and calls.intervals[1] == 2000, cal
 if bar.text ~= "Beatrice" then
   update()
 end
-check("initial-glyph", bar.glyph == "cursor-text", tostring(bar.glyph))
+check("initial-glyph", bar.glyph == "pointer-filled", tostring(bar.glyph))
 check("initial-text", bar.text == "Beatrice", tostring(bar.text))
 check("initial-tooltip", type(bar.tooltip) == "string" and string.find(bar.tooltip, "Beatrice", 1, true) ~= nil, tostring(bar.tooltip))
 check("tooltip-wallpaper", type(bar.tooltip) == "string" and string.find(bar.tooltip, "/pics/Umineko/Beatrice.png", 1, true) ~= nil, tostring(bar.tooltip))
@@ -110,7 +110,7 @@ check("update-propagates", bar.text == "Adwaita", tostring(bar.text))
 config.show_label = false
 update()
 check("show-label-false-hides", bar.text == "", "text=" .. tostring(bar.text))
-check("show-label-false-glyph", bar.glyph == "cursor-text", tostring(bar.glyph))
+check("show-label-false-glyph", bar.glyph == "pointer-filled", tostring(bar.glyph))
 
 -- 3b: show_label default (nil) shows text again
 config.show_label = nil
